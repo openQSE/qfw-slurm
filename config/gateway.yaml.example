@@ -1,0 +1,29 @@
+# This file must be owned by root and must not be group- or world-writable.
+listen:
+  host: 0.0.0.0
+  port: 18095
+  max-credential-bytes: 65536
+  max-frame-bytes: 262144
+  connect-timeout-seconds: 5
+  request-timeout-seconds: 120
+
+authentication:
+  mechanism: munge
+  # Remote SPANK requests come from root-owned slurmstepd. Controller epilog
+  # requests come from SlurmUser, commonly named slurm.
+  accepted-uids: [root, slurm]
+  expected-plugin-name: spank_quantum
+
+slurm:
+  cluster-name: qfw-cluster
+  command: scontrol
+
+qfw:
+  # The systemd unit sources activation before starting defwp. These values
+  # also document and validate the QFw installation selected by the site.
+  activation: /opt/openqse/qfw/bin/qfw-activate
+  venv: /opt/openqse/qfw-venv
+  site-config: /etc/openqse/qfw/site.yaml
+
+journal:
+  path: /var/lib/qfw-slurm-gateway/reservations.sqlite3

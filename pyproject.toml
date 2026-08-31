@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qfw-slurm"
+version = "0.1.0"
+description = "Slurm lifecycle integration for OpenQSE QFw"
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6"]
+
+[project.scripts]
+qfw-slurm-gateway = "qfw_slurm_gateway.__main__:main"
+qfw-slurm-gateway-launch = "qfw_slurm_gateway.launcher:main"
+
+[tool.setuptools]
+package-dir = {"" = "gateway"}
+
+[tool.setuptools.packages.find]
+where = ["gateway"]

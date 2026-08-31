@@ -11,6 +11,10 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(QFW_SLURM_BUILD_PLUGIN "Build the Slurm SPANK plugin" ON)
 option(QFW_SLURM_BUILD_TESTS "Build native tests" ON)
+set(QFW_SLURM_PLUGIN_DIR "${CMAKE_INSTALL_LIBDIR}/slurm" CACHE PATH
+	"Slurm plugin installation directory")
+set(QFW_SLURM_SYSTEMD_DIR "${CMAKE_INSTALL_LIBDIR}/systemd/system" CACHE PATH
+	"systemd unit installation directory")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MUNGE REQUIRED IMPORTED_TARGET munge)
@@ -60,6 +64,8 @@ if(QFW_SLURM_BUILD_PLUGIN)
 	target_compile_options(spank_quantum PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	set_target_properties(spank_quantum PROPERTIES PREFIX "")
+	install(TARGETS spank_quantum
+		LIBRARY DESTINATION ${QFW_SLURM_PLUGIN_DIR})
 
 	add_executable(qfw-slurm-epilog src/epilog/qfw_slurm_epilog.c)
 	target_include_directories(qfw-slurm-epilog PRIVATE ${SLURM_INCLUDE_DIR})
@@ -67,7 +73,18 @@ if(QFW_SLURM_BUILD_PLUGIN)
 		qfw_slurm_native ${SLURM_LIBRARY})
 	target_compile_options(qfw-slurm-epilog PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
+	install(TARGETS qfw-slurm-epilog
+		RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
 endif()
+
+install(FILES
+	config/plugin.conf.example
+	config/gateway.yaml.example
+	config/plugstack.conf.example
+	config/qfw-slurm-gateway.env.example
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/config)
+install(FILES systemd/qfw-slurm-gateway.service
+	DESTINATION ${QFW_SLURM_SYSTEMD_DIR})
 
 if(QFW_SLURM_BUILD_TESTS)
 	add_executable(test_qsgp_protocol tests/protocol/test_qsgp_protocol.c)

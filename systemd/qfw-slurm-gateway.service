@@ -1,0 +1,27 @@
+[Unit]
+Description=QFw Slurm reservation gateway
+After=network-online.target munge.service
+Wants=network-online.target
+Requires=munge.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=qfw-slurm
+Group=qfw-slurm
+EnvironmentFile=/etc/qfw-slurm/gateway.env
+StateDirectory=qfw-slurm-gateway
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/qfw-slurm-gateway
+UMask=0077
+ExecStart=/bin/bash -c 'source "${QFW_PREFIX}/bin/qfw-activate" --venv "${QFW_VENV}" && exec qfw-slurm-gateway-launch --config "${QFW_SLURM_CONFIG}" serve'
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/qfw-slurm-gateway
+
+[Install]
+WantedBy=multi-user.target

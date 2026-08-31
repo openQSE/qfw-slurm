@@ -1,0 +1,16 @@
+# This file must be owned by root and must not be group- or world-writable.
+[gateway]
+host=slurmctld
+port=18095
+connect_timeout_ms=5000
+request_timeout_ms=120000
+max_credential_bytes=65536
+expected_munge_uid=qfw-slurm
+
+# --qpu=nwqsim selects this exact directory-service service ID.
+[resource "nwqsim"]
+service_id=nwqsim-site
+
+# --qpu=ornl-iqm-20q selects this exact directory-service service ID.
+[resource "ornl-iqm-20q"]
+service_id=iqm-ornl-20q
