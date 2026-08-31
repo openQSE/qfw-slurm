@@ -76,9 +76,33 @@ if(QFW_SLURM_BUILD_TESTS)
 		-Wall -Wextra -Werror -Wpedantic)
 	add_test(NAME qsgp_protocol COMMAND test_qsgp_protocol)
 
+	add_executable(qsgp_interop tests/protocol/qsgp_interop.c)
+	target_link_libraries(qsgp_interop PRIVATE qsgp)
+	target_compile_options(qsgp_interop PRIVATE
+		-Wall -Wextra -Werror -Wpedantic)
+
 	add_executable(test_qfw_native tests/unit/test_qfw_native.c)
 	target_link_libraries(test_qfw_native PRIVATE qfw_slurm_native)
 	target_compile_options(test_qfw_native PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	add_test(NAME qfw_native COMMAND test_qfw_native)
+
+	find_package(Python3 COMPONENTS Interpreter)
+	if(Python3_Interpreter_FOUND)
+		execute_process(
+			COMMAND ${Python3_EXECUTABLE} -c "import pytest, yaml"
+			RESULT_VARIABLE QFW_SLURM_PYTHON_TEST_DEPS
+			ERROR_QUIET)
+		if(QFW_SLURM_PYTHON_TEST_DEPS EQUAL 0)
+			add_test(NAME qfw_gateway
+				COMMAND ${CMAKE_COMMAND} -E env
+					PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/gateway
+					QSGP_INTEROP=$<TARGET_FILE:qsgp_interop>
+					${Python3_EXECUTABLE} -m pytest -q
+					${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway)
+		else()
+			message(STATUS
+				"Skipping gateway tests: pytest and PyYAML are required")
+		endif()
+	endif()
 endif()
