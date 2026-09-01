@@ -147,6 +147,10 @@ def load_config(
         raise ConfigurationError("slurm.cluster-name must be a string")
     if slurm.get("verifier", "scontrol-json") != "scontrol-json":
         raise ConfigurationError("slurm.verifier must be 'scontrol-json'")
+    if "adapter" in qfw:
+        raise ConfigurationError(
+            "qfw.adapter is not a production gateway configuration field"
+        )
     listen_host = listen.get("host", "127.0.0.1")
     if not isinstance(listen_host, str) or not listen_host:
         raise ConfigurationError("listen.host must be a nonempty string")

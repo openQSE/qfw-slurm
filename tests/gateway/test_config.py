@@ -42,3 +42,27 @@ def test_config_rejects_implicit_authentication(tmp_path) -> None:
     path.write_text(CONFIG.replace("mechanism: munge", "mechanism: none"))
     with pytest.raises(ConfigurationError, match="must be 'munge'"):
         load_config(path, validate_permissions=False)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    (
+        (
+            "verifier: scontrol-json",
+            "verifier: deterministic",
+            "must be 'scontrol-json'",
+        ),
+        (
+            "qfw:\n",
+            "qfw:\n  adapter: deterministic\n",
+            "not a production gateway configuration field",
+        ),
+    ),
+)
+def test_config_rejects_test_implementations(
+    tmp_path, old, new, message
+) -> None:
+    path = tmp_path / "gateway.yaml"
+    path.write_text(CONFIG.replace(old, new), encoding="utf-8")
+    with pytest.raises(ConfigurationError, match=message):
+        load_config(path, validate_permissions=False)
