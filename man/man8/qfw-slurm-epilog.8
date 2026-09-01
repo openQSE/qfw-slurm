@@ -1,0 +1,55 @@
+.TH QFW-SLURM-EPILOG 8 "September 2026" "qfw-slurm 0.1.0" "System Administration"
+.SH NAME
+qfw-slurm-epilog \- release QPM reservations after Slurm allocation completion
+.SH SYNOPSIS
+.B qfw-slurm-epilog
+.RI [ --config " path" ]
+.SH DESCRIPTION
+.B qfw-slurm-epilog
+is installed as a Slurm
+.B EpilogSlurmctld
+program. It reads the authoritative allocation identity supplied by the
+controller and calls the same typed release operation used by
+.BR qfw-slurm-driver (1).
+.PP
+The epilog logs every unresolved service result. Release failures remain in
+the gateway journal for operator recovery. The program returns zero after
+diagnostics because allocation termination is already in progress and a QPM
+failure must not mark a healthy compute node down.
+.SH OPTIONS
+.TP
+.BI --config " path"
+Read a native client configuration other than
+.IR /etc/qfw-slurm/plugin.conf .
+.SH ENVIRONMENT
+.TP
+.B SLURM_CLUSTER_NAME
+Cluster name used for the release request. Required.
+.TP
+.B SLURM_JOB_ID
+Canonical job ID for a normal allocation. Required.
+.TP
+.B SLURM_HET_JOB_ID
+Canonical heterogeneous job leader when Slurm supplies one.
+.TP
+.B SLURM_JOB_START_TIME
+Optional allocation epoch.
+.SH CONFIGURATION
+Configure the controller with an absolute path, for example:
+.PP
+.RS
+.B EpilogSlurmctld=/usr/sbin/qfw-slurm-epilog
+.RE
+.PP
+The native configuration must be readable by the configured Slurm controller
+account. Its endpoint must identify the same gateway that handled reserve.
+.SH EXIT STATUS
+The command returns zero after both successful and failed release attempts.
+Invalid command-line syntax returns 2. Operational failures are written to
+standard error and retained in the gateway journal when a reservation record
+exists.
+.SH SEE ALSO
+.BR qfw-slurm-driver (1),
+.BR qfw-slurm-plugin.conf (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-gateway (8)

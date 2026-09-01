@@ -1,0 +1,69 @@
+.TH QFW-SLURM-GATEWAY-LAUNCH 8 "September 2026" "qfw-slurm 0.1.0" "System Administration"
+.SH NAME
+qfw-slurm-gateway-launch \- initialize DEFw and run a gateway command
+.SH SYNOPSIS
+.B qfw-slurm-gateway-launch
+.BI --config " path"
+.I gateway-command
+.RI [ gateway-arguments ]
+.SH DESCRIPTION
+.B qfw-slurm-gateway-launch
+is the supported entry point for gateway commands that contact the DEFw
+directory or QPM services. It validates the activated QFw prefix and Python
+environment, reads the site directory connection record, prepares the DEFw
+parent environment, and replaces itself with
+.B defwp
+running
+.BR qfw-slurm-gateway (8).
+.PP
+The site systemd unit activates QFw and invokes this command for
+.BR serve .
+Operators also use it for
+.B check
+and
+.BR retry-release .
+.SH OPTIONS
+.TP
+.BI --config " path"
+Read the gateway YAML configuration and use its QFw activation, virtual
+environment, and site configuration paths.
+.SH EXAMPLES
+Check one registered service:
+.PP
+.RS
+.nf
+source /opt/openqse/qfw/bin/qfw-activate \
+  --venv /opt/openqse/qfw-venv
+qfw-slurm-gateway-launch \
+  --config /etc/qfw-slurm/gateway.yaml \
+  check --service nwqsim-site
+.fi
+.RE
+.PP
+Retry one incomplete release:
+.PP
+.RS
+.nf
+qfw-slurm-gateway-launch \
+  --config /etc/qfw-slurm/gateway.yaml \
+  retry-release 12345
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B QFW_PREFIX
+Must identify the activated QFw installation named by the gateway file.
+.TP
+.B DEFW_PREFIX
+Must contain the executable
+.IR bin/defwp .
+.TP
+.B QFW_SHARED_ROOT
+Expands the directory connection path selected by the QFw site configuration.
+.SH EXIT STATUS
+The command exits with the selected gateway command's status. Activation,
+configuration, connection-record, or DEFw launcher failures are nonzero.
+.SH SEE ALSO
+.BR qfw-slurm-gateway.yaml (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-gateway (8)

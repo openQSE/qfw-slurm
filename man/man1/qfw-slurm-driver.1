@@ -1,0 +1,167 @@
+.TH QFW-SLURM-DRIVER 1 "September 2026" "qfw-slurm 0.1.0" "User Commands"
+.SH NAME
+qfw-slurm-driver \- exercise QFw gateway reservation operations
+.SH SYNOPSIS
+.B qfw-slurm-driver
+.B reserve
+.RI [ options ]
+.br
+.B qfw-slurm-driver
+.B release
+.RI [ options ]
+.br
+.B qfw-slurm-driver
+.B lifecycle
+.RI [ options ]
+.SH DESCRIPTION
+.B qfw-slurm-driver
+is a Slurm-independent diagnostic frontend for the same typed gateway client
+and reservation operations used by the SPANK plugin and controller epilog.
+It does not load the SPANK module and does not link with libslurm.
+.PP
+The caller supplies allocation metadata that Slurm normally supplies to the
+plugin. A production gateway verifies that metadata against an active job in
+slurmctld before contacting QPM services.
+.SH COMMANDS
+.TP
+.B reserve
+Request the configured QPM service set, validate every result, and print the
+canonical reservation tuple set. The reservation remains active.
+.TP
+.B release
+Release the reservation set associated with the cluster and canonical job ID.
+Every service result is inspected even when an earlier result is unresolved.
+.TP
+.B lifecycle
+Reserve, optionally hold, and release in one invocation. SIGINT and SIGTERM
+trigger one bounded release attempt after an accepted reservation.
+.SH ALLOCATION OPTIONS
+.TP
+.BI --config " path"
+Read the protected native client and resource mapping from
+.IR path .
+.TP
+.BI --cluster " name"
+Set the Slurm cluster name expected by the gateway.
+.TP
+.BI --job-id " id"
+Set the canonical Slurm job ID.
+.TP
+.BI --uid " uid"
+Set the job owner's numeric user ID.
+.TP
+.BI --gid " gid"
+Set the job owner's numeric group ID.
+.TP
+.BI --allocation-epoch " seconds"
+Set a stable allocation timestamp used in request identity.
+.TP
+.BI --walltime-seconds " seconds"
+Set the finite reservation limit. Required by
+.B reserve
+and
+.BR lifecycle .
+.TP
+.BI --hetero-job-id " id"
+Identify one heterogeneous job component. Must be paired with
+.BR --hetero-component .
+.TP
+.BI --hetero-component " index"
+Set the heterogeneous component index.
+.SH WORKLOAD OPTIONS
+The following options are required by
+.B reserve
+and
+.B lifecycle
+unless stated otherwise.
+.TP
+.BI --qpu " name[,name...]"
+Select one or more configured resource names. Each name maps to one exact QPM
+service ID in
+.BR qfw-slurm-plugin.conf (5).
+.TP
+.BI --workload-kind " kind"
+Set
+.B quantum
+or
+.BR hybrid .
+.TP
+.BI --circ-count " count"
+Set the maximum circuit count.
+.TP
+.BI --max-qubits " count"
+Set the maximum qubits per circuit.
+.TP
+.BI --max-depth " count"
+Set the maximum circuit depth.
+.TP
+.BI --max-shots " count"
+Set the maximum shots.
+.TP
+.BI --max-one-q-gates " count"
+Set the optional maximum one-qubit gate count.
+.TP
+.BI --max-two-q-gates " count"
+Set the optional maximum two-qubit gate count.
+.TP
+.BI --max-measurements " count"
+Set the optional maximum measurement count.
+.SH OTHER OPTIONS
+.TP
+.BI --release-reason " code"
+Set the unsigned release reason. The default is zero.
+.TP
+.BI --hold-seconds " seconds"
+For
+.BR lifecycle ,
+wait after acceptance before sending release.
+.TP
+.B --json
+Emit one bounded JSON Lines record per operation instead of human-readable
+output.
+.TP
+.B --help
+Print the command summary.
+.SH OUTPUT
+Successful human-readable reserve output includes a shell command of the form
+.PP
+.RS
+.B export QFW_RESERVATIONS='[["service-id","41"]]'
+.RE
+.PP
+Reservation IDs are decimal strings so JSON preserves the complete unsigned
+64-bit range. The driver never prints MUNGE credentials or provider secrets.
+.SH EXIT STATUS
+.TP
+.B 0
+The requested command reached its expected terminal state.
+.TP
+.B 2
+Invalid command or argument.
+.TP
+.B 3
+Transport failure or timeout.
+.TP
+.B 4
+MUNGE or peer authentication failure.
+.TP
+.B 5
+Gateway or QPM operation failure.
+.TP
+.B 6
+Delayed or rejected admission.
+.TP
+.B 7
+Invalid or incomplete normal response.
+.TP
+.B 8
+Unresolved release.
+.SH FILES
+.TP
+.I /etc/qfw-slurm/plugin.conf
+Default protected gateway-client and resource mapping used by site commands.
+.SH SEE ALSO
+.BR qfw-slurm-plugin.conf (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-gateway (8),
+.BR qfw-slurm-epilog (8)

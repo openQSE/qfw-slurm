@@ -1,0 +1,109 @@
+.TH QFW-SLURM-GATEWAY.YAML 5 "September 2026" "qfw-slurm 0.1.0" "File Formats"
+.SH NAME
+qfw-slurm-gateway.yaml \- QSGP gateway service configuration
+.SH DESCRIPTION
+.B qfw-slurm-gateway.yaml
+selects the QSGP listener, authenticated caller policy, Slurm verifier, QFw
+installation, and durable journal. The file must be owned by root and must not
+be group- or world-writable.
+.SH LISTEN
+.TP
+.B host
+Listener hostname or address.
+.TP
+.B port
+Listener TCP port.
+.TP
+.B max-credential-bytes
+Maximum accepted MUNGE credential size.
+.TP
+.B max-frame-bytes
+Maximum decoded QSGP frame size.
+.TP
+.B connect-timeout-seconds
+Bound for external connection setup.
+.TP
+.B request-timeout-seconds
+Absolute gateway operation bound.
+.SH AUTHENTICATION
+.TP
+.B mechanism
+Must be
+.BR munge .
+.TP
+.B accepted-uids
+User names or numeric UIDs permitted to originate lifecycle requests. A normal
+site includes root for remote SPANK callbacks and the configured Slurm
+controller user for epilog requests.
+.TP
+.B expected-plugin-name
+Authenticated QSGP caller name. The current protocol uses
+.BR spank_quantum .
+.SH SLURM
+.TP
+.B cluster-name
+Exact cluster name accepted in requests and queried through slurmctld.
+.TP
+.B command
+Path or command name for the JSON-capable
+.B scontrol
+client.
+.SH QFW
+.TP
+.B activation
+Absolute path to the selected
+.B qfw-activate
+script.
+.TP
+.B venv
+Absolute path to the Python environment containing QFw, DEFw, and the gateway.
+.TP
+.B site-config
+Absolute path to the QFw site YAML file. Its directory connection record is
+used by
+.BR qfw-slurm-gateway-launch (8).
+.SH JOURNAL
+.TP
+.B path
+Absolute path to the protected SQLite reservation journal. The gateway service
+account must own its parent directory.
+.SH EXAMPLE
+.nf
+listen:
+  host: 0.0.0.0
+  port: 18095
+  max-credential-bytes: 65536
+  max-frame-bytes: 262144
+  connect-timeout-seconds: 5
+  request-timeout-seconds: 120
+
+authentication:
+  mechanism: munge
+  accepted-uids: [root, slurm]
+  expected-plugin-name: spank_quantum
+
+slurm:
+  cluster-name: qfw-cluster
+  command: scontrol
+
+qfw:
+  activation: /opt/openqse/qfw/bin/qfw-activate
+  venv: /opt/openqse/qfw-venv
+  site-config: /etc/openqse/qfw/site.yaml
+
+journal:
+  path: /var/lib/qfw-slurm-gateway/reservations.sqlite3
+.fi
+.SH FILES
+.TP
+.I /etc/qfw-slurm/gateway.yaml
+Conventional installed configuration.
+.TP
+.I /usr/share/qfw-slurm/config/gateway.yaml.example
+Packaged example when the installation prefix is
+.IR /usr .
+.SH SEE ALSO
+.BR qfw-slurm-plugin.conf (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-gateway (8),
+.BR qfw-slurm-gateway-launch (8)

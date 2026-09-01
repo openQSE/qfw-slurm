@@ -1,265 +1,64 @@
 # qfw-slurm
 
 `qfw-slurm` connects Slurm allocation lifecycle events to QFw QPM
-reservations. It is intentionally separate from QFw and does not add a Slurm
-dependency to the QFw build.
+reservations. It remains separate from QFw so the QFw build has no Slurm
+dependency.
 
-The repository provides four runtime components:
+The repository provides:
 
-- `spank_quantum.so` parses bounded workload options and acquires an atomic
-  reservation set before a managed task starts.
-- `qfw-slurm-epilog` asks the gateway to release every reservation after the
-  complete Slurm allocation terminates.
-- `qfw-slurm-gateway` authenticates native requests with MUNGE, verifies job
-  identity with `slurmctld`, discovers exact QPM service IDs through DEFw, and
-  journals QPM reserve and release operations in SQLite.
-- `qfw-slurm-driver` exercises the same native reservation operations without
-  loading a SPANK callback or linking to libslurm.
+- `spank_quantum.so`, which collects bounded workload requirements and exports
+  accepted reservation tuples to managed tasks.
+- `qfw-slurm-gateway`, which authenticates requests, verifies Slurm jobs,
+  discovers QPM services through DEFw, and maintains the SQLite journal.
+- `qfw-slurm-epilog`, which releases allocation reservations from the Slurm
+  controller.
+- `qfw-slurm-driver`, which exercises the shared lifecycle operations without
+  loading SPANK or linking with libslurm.
 
-The native and Python components communicate through QSGP version 1. QSGP
-uses an explicit network-byte-order header and bounded TLV records inside a
-MUNGE credential. It never sends C memory layouts, Python objects, provider
-credentials, or user circuits.
+Native and Python components communicate through QSGP version 1 using bounded,
+network-byte-order records protected by MUNGE.
 
-## Build and test
+## Documentation
 
-The native build requires the Slurm development headers, libslurm, libmunge,
-and the MUNGE development headers. Gateway tests additionally require Python
-3.10 or newer, PyYAML, and pytest.
+Manual pages are the authoritative usage reference:
+
+```bash
+man 7 qfw-slurm
+man 1 qfw-slurm-driver
+man 8 qfw-slurm-gateway
+man 8 qfw-slurm-gateway-launch
+man 8 qfw-slurm-epilog
+man 5 qfw-slurm-plugin.conf
+man 5 qfw-slurm-gateway.yaml
+```
+
+The [test recipe index](docs/recipes/README.md) provides complete procedures
+for native tests, deterministic gateway testing, live DEFw/QPM testing, and
+SPANK integration testing.
+
+## Build and install
+
+The full native build requires a C11 compiler, CMake 3.20 or newer, Slurm
+development files, libmunge, and MUNGE development headers. Gateway tests also
+require Python 3.10 or newer, PyYAML, and pytest.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-```
-
-The test suite checks strict native decoding, Python decoding, C/Python wire
-interoperability, option validation, durable replay, request conflicts,
-allocation-level rollback, exhaustive release, and stale QPM incarnations.
-
-## Run the standalone driver
-
-The driver is a diagnostic frontend, not a substitute for a SPANK integration
-test. It accepts the allocation identity that Slurm normally supplies and uses
-the production configuration, MUNGE, QSGP client, response validation, and
-gateway. The production gateway accepts only an active job identity verified
-through `slurmctld`.
-
-Run a complete reserve and release lifecycle for an active allocation:
-
-```bash
-qfw-slurm-driver lifecycle \
-    --config /etc/qfw-slurm/plugin.conf \
-    --cluster qfw-slurm \
-    --job-id 123 \
-    --uid 1001 \
-    --gid 1001 \
-    --allocation-epoch 1788000000 \
-    --walltime-seconds 900 \
-    --qpu nwqsim \
-    --workload-kind quantum \
-    --circ-count 2 \
-    --max-qubits 5 \
-    --max-depth 100 \
-    --max-shots 1024
-```
-
-Use `reserve` or `release` for one operation. `--json` emits one versioned JSON
-record per operation. `--hold-seconds` keeps an accepted lifecycle at a
-controlled point before release; SIGINT and SIGTERM cause one bounded release
-attempt. `qfw-slurm-driver --help` lists the complete option set and the
-explicit metadata required for each command. Successful human-readable reserve
-output includes the exact `QFW_RESERVATIONS` value that the SPANK adapter would
-export.
-
-The deterministic lifecycle suite uses the same driver, MUNGE exchange,
-gateway server, operation service, and SQLite journal as the production path.
-Run it from an initialized DEFw test environment as root:
-
-```bash
-export PYTHONPATH="${PWD}/gateway:${PWD}"
-export QFW_TEST_PYTHON="$(command -v python3)"
-export QFW_TEST_DEFW_RUNNER="${DEFW_PREFIX}/bin/defwp"
-tests/system/test_driver_gateway.sh \
-    "${PWD}/build/qfw-slurm-driver"
-```
-
-`QFW_TEST_DEFW_RUNNER` makes every deterministic gateway process start through
-`defwp`. The surrounding test environment must already contain the directory
-service parent variables normally prepared by the gateway launcher. Omitting
-the variable runs the same isolated suite without DEFw and is useful for a
-native-only development build. Deterministic verifier and QPM adapters exist
-only under `tests/`; production gateway configuration rejects them.
-
-## Install
-
-Install the native artifacts for the Slurm ABI used by the target cluster:
-
-```bash
 sudo cmake --install build --prefix /usr
 ```
 
-Install the gateway package into the Python environment selected for the site
-QFw installation:
+Install the Python gateway in the QFw virtual environment selected by the
+site:
 
 ```bash
 source /opt/openqse/qfw/bin/qfw-activate \
-    --venv /opt/openqse/qfw-venv
+  --venv /opt/openqse/qfw-venv
 python -m pip install .
 qfw-deactivate
 ```
 
-Create a dedicated `qfw-slurm` account with the same numeric UID and GID on
-every node that verifies gateway MUNGE responses. Give that account access to
-the MUNGE socket. The provided systemd unit creates and owns
-`/var/lib/qfw-slurm-gateway` through `StateDirectory`.
-
-Copy the examples from `/usr/share/qfw-slurm/config` into these protected
-site paths:
-
-```text
-/etc/qfw-slurm/plugin.conf
-/etc/qfw-slurm/gateway.yaml
-/etc/qfw-slurm/gateway.env
-/etc/slurm/plugstack.conf
-```
-
-The first three files must be owned by root and must not be group- or
-world-writable. `plugin.conf` must remain readable by remote `slurmstepd`
-processes and by the Slurm controller account that invokes the epilog. The
-plugin refuses an unsafe `plugin.conf`, and the gateway refuses an unsafe
-`gateway.yaml`. The files contain service mappings and endpoints, but no QPU
-credentials. Set `QFW_SHARED_ROOT` in `gateway.env` to the shared root used by
-`site.yaml` for its directory-service connection record.
-
-List both identities that can originate authenticated lifecycle traffic in
-`gateway.yaml`. A typical deployment accepts root for remote SPANK callbacks
-and the site `SlurmUser` for `EpilogSlurmctld`:
-
-```yaml
-authentication:
-  mechanism: munge
-  accepted-uids: [root, slurm]
-  expected-plugin-name: spank_quantum
-```
-
-Configure Slurm to load the required plugin and controller epilog:
-
-```text
-PlugStackConfig=/etc/slurm/plugstack.conf
-EpilogSlurmctld=/usr/sbin/qfw-slurm-epilog
-```
-
-Install and start the provided systemd unit after the site directory service
-is available:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now qfw-slurm-gateway.service
-sudo systemctl restart slurmctld
-```
-
-The launcher reads the directory-service connection record selected by
-`site.yaml`, prepares the DEFw parent environment, and then replaces itself
-with `defwp`. Invoking the gateway Python module directly does not initialize
-the DEFw client runtime.
-
-## Submit a managed workload
-
-Every resource name maps to one exact QPM `service_id` in root-owned
-`plugin.conf`. Required workload bounds are separate Slurm options:
-
-```bash
-salloc --nodes=1 --ntasks=1 --time=00:15:00 \
-    --qpu=nwqsim \
-    --workload-kind=quantum \
-    --circ-count=2 \
-    --max-qubits=5 \
-    --max-depth=100 \
-    --max-shots=1024
-
-source /opt/openqse/qfw/bin/qfw-activate \
-    --venv /opt/openqse/qfw-venv
-cd "${QFW_SHARE_DIR}/examples"
-./qfw_qiskit_simple.sh --service-mode site --backend nwqsim 5
-qfw-deactivate
-exit
-```
-
-On acceptance, the plugin exports a canonical value such as:
-
-```text
-QFW_RESERVATIONS=[["nwqsim-site","41"]]
-```
-
-Reservation IDs are decimal strings so the complete `uint64_t` range is
-preserved. The gateway, rather than the application, owns the durable journal.
-The first managed step must provide all workload bounds. A later step in the
-same allocation may provide only the same `--qpu` selection; the gateway then
-retrieves the existing reservation set without reserving the QPM again.
-
-## Inspect and recover
-
-The protected status commands may be run as the gateway service account. They
-do not expose QPU credentials or MUNGE material:
-
-```bash
-sudo -u qfw-slurm qfw-slurm-gateway \
-    --config /etc/qfw-slurm/gateway.yaml list
-
-sudo -u qfw-slurm qfw-slurm-gateway \
-    --config /etc/qfw-slurm/gateway.yaml status 12345
-```
-
-The readiness command must run through DEFw. Repeat `--service` for every QPM
-that an operator wants to verify:
-
-```bash
-sudo -u qfw-slurm /bin/bash -c '
-  source /opt/openqse/qfw/bin/qfw-activate \
-      --venv /opt/openqse/qfw-venv
-  exec qfw-slurm-gateway-launch \
-      --config /etc/qfw-slurm/gateway.yaml \
-      check --service nwqsim-site --service iqm-ornl-20q
-'
-```
-
-Retrying a QPM release requires an initialized DEFw process:
-
-```bash
-sudo -u qfw-slurm /bin/bash -c '
-  source /opt/openqse/qfw/bin/qfw-activate \
-      --venv /opt/openqse/qfw-venv
-  exec qfw-slurm-gateway-launch \
-      --config /etc/qfw-slurm/gateway.yaml \
-      retry-release 12345
-'
-```
-
-The retry attempts every nonterminal reservation even when an earlier QPM is
-unavailable. A stale runtime or generation is reported and retained for
-operator review; the gateway never sends an old reservation ID to a new QPM
-incarnation.
-
-Driver validation and SPANK validation cover different boundaries. The driver
-proves the shared native operation and gateway behavior for an active Slurm
-job. A final cluster check must also invoke an actual managed step and inspect
-the environment installed by the plugin:
-
-```bash
-salloc --nodes=1 --ntasks=1 --time=00:05:00
-srun --qpu=nwqsim \
-    --workload-kind=quantum \
-    --circ-count=1 \
-    --max-qubits=5 \
-    --max-depth=20 \
-    --max-shots=64 \
-    /bin/sh -c 'test -n "${QFW_RESERVATIONS}" && \
-        printf "%s\n" "${QFW_RESERVATIONS}"'
-exit
-```
-
-After the allocation exits, `qfw-slurm-gateway status JOB_ID` must report the
-allocation and every reservation as `released`. A missing response or an
-unresolved QPM release remains journaled for the `retry-release` procedure
-rather than being reported as successful.
+Installed examples for the protected site files are under
+`share/qfw-slurm/config`. The packaged systemd unit is
+`qfw-slurm-gateway.service`.

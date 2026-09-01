@@ -1,0 +1,110 @@
+.TH QFW-SLURM-GATEWAY 8 "September 2026" "qfw-slurm 0.1.0" "System Administration"
+.SH NAME
+qfw-slurm-gateway \- serve and inspect QFw Slurm reservations
+.SH SYNOPSIS
+.B qfw-slurm-gateway
+.BI --config " path"
+.RI [ --log-level " level" ]
+.B serve
+.br
+.B qfw-slurm-gateway
+.BI --config " path"
+.B status
+.I job-id
+.br
+.B qfw-slurm-gateway
+.BI --config " path"
+.B list
+.br
+.B qfw-slurm-gateway
+.BI --config " path"
+.B check
+.RI [ --service " service-id" ]...
+.br
+.B qfw-slurm-gateway
+.BI --config " path"
+.B retry-release
+.I job-id
+.RI [ --reason " code" ]
+.RI [ --request-id " id" ]
+.SH DESCRIPTION
+.B qfw-slurm-gateway
+provides the authenticated QSGP endpoint used by the SPANK plugin, controller
+epilog, and diagnostic driver. It verifies job identity through slurmctld,
+resolves exact QPM services through DEFw, and journals reserve and release
+operations in SQLite.
+.PP
+Commands that contact the DEFw directory or a QPM must run inside an
+initialized DEFw process. Use
+.BR qfw-slurm-gateway-launch (8)
+or the installed systemd service. The read-only
+.B status
+and
+.B list
+commands access only the journal and may run directly.
+.SH GLOBAL OPTIONS
+.TP
+.BI --config " path"
+Read the protected gateway YAML file. This option is required.
+.TP
+.BI --log-level " level"
+Set
+.BR DEBUG ,
+.BR INFO ,
+.BR WARNING ,
+or
+.BR ERROR .
+The default is
+.BR INFO .
+.SH COMMANDS
+.TP
+.B serve
+Run the QSGP listener until SIGINT or SIGTERM. Under systemd, readiness and
+stopping state are sent through
+.BR sd_notify (3).
+.TP
+.BI status " job-id"
+Print the allocation, reservation rows, response record, and lifecycle state
+as JSON.
+.TP
+.B list
+Print all nonterminal allocations as JSON.
+.TP
+.BI check " [--service service-id]..."
+Open the journal, initialize DEFw, and resolve every named QPM. The JSON result
+includes each runtime ID and directory generation.
+.TP
+.BI retry-release " job-id"
+Retry every nonterminal reservation for one allocation. Use
+.BI --reason " code"
+to select the release reason and
+.BI --request-id " id"
+to reuse a known request identity. Otherwise a nonzero unsigned request ID is
+generated.
+.SH JOURNAL STATES
+An allocation may be
+.BR reserving ,
+.BR reserved ,
+.BR releasing ,
+.BR release-incomplete ,
+or
+.BR released .
+Unresolved release results remain journaled for an operator retry. The gateway
+does not report them as released.
+.SH SECURITY
+The gateway accepts only MUNGE-authenticated sender UIDs listed by its
+configuration or otherwise authorized for the verified Slurm job. QPM
+credentials remain inside QPMd and are not stored in the gateway journal.
+.SH FILES
+.TP
+.I /etc/qfw-slurm/gateway.yaml
+Protected listener, authentication, Slurm, QFw, and journal configuration.
+.TP
+.I /var/lib/qfw-slurm-gateway/reservations.sqlite3
+Default durable journal path in the packaged example.
+.SH SEE ALSO
+.BR qfw-slurm-driver (1),
+.BR qfw-slurm-gateway.yaml (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-gateway-launch (8),
+.BR qfw-slurm-epilog (8)

@@ -5,6 +5,8 @@ project(qfw_slurm VERSION 0.1.0 LANGUAGES C)
 include(CTest)
 include(GNUInstallDirs)
 
+add_subdirectory(man)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
