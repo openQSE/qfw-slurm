@@ -424,10 +424,20 @@ class GatewayService:
                 results.append(await self._release_one(request, record))
             response = ReleaseResponse(request.request_id, tuple(results))
             encoded = response_to_dict(response)
+            unresolved = {
+                ReservationState.AUTHORIZATION_FAILURE,
+                ReservationState.QPM_FAILURE,
+                ReservationState.GATEWAY_FAILURE,
+            }
+            allocation_state = (
+                "release-incomplete"
+                if any(item.state in unresolved for item in results)
+                else "released"
+            )
             self.journal.complete_allocation(
                 request.cluster_name,
                 request.canonical_job_id,
-                "released",
+                allocation_state,
                 encoded,
             )
             self.journal.complete_operation(

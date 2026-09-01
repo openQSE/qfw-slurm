@@ -91,6 +91,11 @@ class FailingAdapter(FakeAdapter):
         return super().resolve(service_id)
 
 
+class ReleaseFailingAdapter(FakeAdapter):
+    def release(self, binding, reservation_id, reason):
+        raise RuntimeError("configured release failure")
+
+
 def request(request_id=1):
     return ReserveRequest(
         request_id,
@@ -190,6 +195,27 @@ async def _release_rejects_stale_runtime_without_calling_qpm(tmp_path) -> None:
     assert states["svc-a"] == ReservationState.STALE_RUNTIME
     assert states["svc-b"] == ReservationState.RELEASED
     assert [item[0] for item in adapter.releases] == ["svc-b"]
+    journal.close()
+
+
+def test_release_failure_remains_nonterminal(tmp_path) -> None:
+    asyncio.run(_release_failure_remains_nonterminal(tmp_path))
+
+
+async def _release_failure_remains_nonterminal(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = ReleaseFailingAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+    assert isinstance(await service.handle(request(), 1001), ReserveResponse)
+
+    response = await service.handle(ReleaseRequest(2, "cluster", 100, 3), 1001)
+
+    assert isinstance(response, ReleaseResponse)
+    assert {item.state for item in response.results} == {
+        ReservationState.QPM_FAILURE
+    }
+    status = journal.allocation_status("cluster", 100)
+    assert status["state"] == "release-incomplete"
     journal.close()
 
 
