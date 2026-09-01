@@ -15,8 +15,6 @@
 
 SPANK_PLUGIN(spank_quantum, 1)
 
-#define RESERVATIONS_ENV_SIZE 16384U
-
 static struct qfw_plugin_config plugin_config;
 static struct qfw_gateway_client gateway_client;
 static struct qfw_quantum_options quantum_options;
@@ -152,19 +150,15 @@ static job_info_t *find_job(job_info_msg_t *message, uint32_t job_id)
 	return message->record_count == 1 ? &message->job_array[0] : NULL;
 }
 
-static int build_request(spank_t spank,
-	struct qsgp_reserve_request *request, char *error, size_t error_size)
+static int load_allocation(spank_t spank,
+	struct qfw_allocation_context *allocation, char *error,
+	size_t error_size)
 {
 	job_info_msg_t *message = NULL;
 	job_info_t *job;
-	char cluster_name[QSGP_MAX_CLUSTER_NAME + 1U];
 	uint32_t job_id;
 	uid_t job_uid;
 	gid_t job_gid;
-	uint64_t canonical_job_id;
-	uint64_t walltime_ns;
-	uint64_t allocation_epoch;
-	bool has_hetero;
 	int result = -1;
 
 	if (spank_get_item(spank, S_JOB_ID, &job_id) != ESPANK_SUCCESS ||
@@ -194,41 +188,39 @@ static int build_request(spank_t spank,
 			"managed QPU requests require a finite Slurm time limit");
 		goto out;
 	}
-	if (load_cluster_name(cluster_name, sizeof(cluster_name)) != 0) {
+	memset(allocation, 0, sizeof(*allocation));
+	if (load_cluster_name(allocation->cluster_name,
+		sizeof(allocation->cluster_name)) != 0) {
 		(void)snprintf(error, error_size,
 			"cannot read the Slurm cluster name");
 		goto out;
 	}
-	has_hetero = job->het_job_id != 0 && job->het_job_id != NO_VAL;
-	canonical_job_id = has_hetero ? job->het_job_id : job_id;
-	allocation_epoch = job->submit_time > 0 ?
+	allocation->has_hetero =
+		job->het_job_id != 0 && job->het_job_id != NO_VAL;
+	allocation->canonical_job_id = allocation->has_hetero ?
+		job->het_job_id : job_id;
+	allocation->allocation_epoch = job->submit_time > 0 ?
 		(uint64_t)job->submit_time : 0;
-	walltime_ns = (uint64_t)job->time_limit * UINT64_C(60000000000);
-	result = qfw_build_reserve_request(&plugin_config, &quantum_options,
-		cluster_name, canonical_job_id, allocation_epoch, job_uid, job_gid,
-		has_hetero, has_hetero ? job_id : 0,
-		has_hetero ? job->het_job_offset : 0, walltime_ns,
-		request, error, error_size);
+	allocation->job_uid = job_uid;
+	allocation->job_gid = job_gid;
+	allocation->walltime_ns =
+		(uint64_t)job->time_limit * UINT64_C(60000000000);
+	if (allocation->has_hetero) {
+		allocation->hetero_job_id = job_id;
+		allocation->hetero_component = job->het_job_offset;
+	}
+	result = 0;
 out:
 	if (message != NULL)
 		slurm_free_job_info_msg(message);
 	return result;
 }
 
-static void remember_gateway_failure(
-	const struct qfw_gateway_call_error *error)
-{
-	remember_error(qfw_gateway_call_error_message(error));
-}
-
 int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 {
-	struct qsgp_reserve_request request;
-	struct qsgp_reserve_response response;
-	struct qfw_gateway_call_error call_error;
-	char reservations[RESERVATIONS_ENV_SIZE];
+	struct qfw_allocation_context allocation;
+	struct qfw_reserve_operation_result operation;
 	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
-	int status;
 
 	(void)argc;
 	(void)argv;
@@ -246,36 +238,29 @@ int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 		return SLURM_SUCCESS;
 	if (qfw_quantum_options_validate(&quantum_options, error,
 		sizeof(error)) != 0 ||
-	    build_request(spank, &request, error, sizeof(error)) != 0) {
+	    load_allocation(spank, &allocation, error, sizeof(error)) != 0) {
 		remember_error(error);
 		return SLURM_SUCCESS;
 	}
-	status = qfw_gateway_reserve(&gateway_client, &request, &response,
-		&call_error);
-	if (status != QFW_GATEWAY_OK) {
-		remember_gateway_failure(&call_error);
+	if (qfw_reserve_operation(&gateway_client, &plugin_config,
+		&quantum_options, &allocation, &operation) != 0) {
+		remember_error("cannot execute QPM reservation operation");
 		return SLURM_SUCCESS;
 	}
-	if (response.request_id != request.request_id ||
-	    response.decision != QSGP_ADMISSION_ACCEPTED) {
-		const struct qsgp_service_result *decisive =
-			response.result_count != 0 ? &response.results[0] : NULL;
-
-		if (decisive != NULL && decisive->has_diagnostic)
-			remember_error(decisive->diagnostic);
-		else
-			remember_error("QPM reservation was not accepted");
+	if (operation.state != QFW_OPERATION_ACCEPTED) {
+		remember_error(operation.diagnostic[0] != '\0' ?
+			operation.diagnostic : "QPM reservation was not accepted");
 		return SLURM_SUCCESS;
 	}
-	if (qfw_reservations_json(&response, reservations,
-		sizeof(reservations)) != 0 ||
-	    spank_setenv(spank, "QFW_RESERVATIONS", reservations, 1) !=
+	if (spank_setenv(spank, "QFW_RESERVATIONS",
+		operation.reservations_json, 1) !=
 		ESPANK_SUCCESS) {
 		remember_error("cannot export QFW_RESERVATIONS");
 		return SLURM_SUCCESS;
 	}
 	slurm_info("%s: request=%" PRIu64 " services=%zu decision=accepted",
-		plugin_name, request.request_id, response.result_count);
+		plugin_name, operation.request.request_id,
+		operation.response.result_count);
 	return SLURM_SUCCESS;
 }
 
