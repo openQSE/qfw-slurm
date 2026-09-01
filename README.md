@@ -72,6 +72,25 @@ explicit metadata required for each command. Successful human-readable reserve
 output includes the exact `QFW_RESERVATIONS` value that the SPANK adapter would
 export.
 
+The deterministic lifecycle suite uses the same driver, MUNGE exchange,
+gateway server, operation service, and SQLite journal as the production path.
+Run it from an initialized DEFw test environment as root:
+
+```bash
+export PYTHONPATH="${PWD}/gateway:${PWD}"
+export QFW_TEST_PYTHON="$(command -v python3)"
+export QFW_TEST_DEFW_RUNNER="${DEFW_PREFIX}/bin/defwp"
+tests/system/test_driver_gateway.sh \
+    "${PWD}/build/qfw-slurm-driver"
+```
+
+`QFW_TEST_DEFW_RUNNER` makes every deterministic gateway process start through
+`defwp`. The surrounding test environment must already contain the directory
+service parent variables normally prepared by the gateway launcher. Omitting
+the variable runs the same isolated suite without DEFw and is useful for a
+native-only development build. Deterministic verifier and QPM adapters exist
+only under `tests/`; production gateway configuration rejects them.
+
 ## Install
 
 Install the native artifacts for the Slurm ABI used by the target cluster:
@@ -106,11 +125,23 @@ site paths:
 ```
 
 The first three files must be owned by root and must not be group- or
-world-writable. The plugin refuses an unsafe `plugin.conf`, and the gateway
-refuses an unsafe `gateway.yaml`. The files contain service mappings and
-endpoints, but no QPU credentials. Set `QFW_SHARED_ROOT` in `gateway.env` to
-the shared root used by `site.yaml` for its directory-service connection
-record.
+world-writable. `plugin.conf` must remain readable by remote `slurmstepd`
+processes and by the Slurm controller account that invokes the epilog. The
+plugin refuses an unsafe `plugin.conf`, and the gateway refuses an unsafe
+`gateway.yaml`. The files contain service mappings and endpoints, but no QPU
+credentials. Set `QFW_SHARED_ROOT` in `gateway.env` to the shared root used by
+`site.yaml` for its directory-service connection record.
+
+List both identities that can originate authenticated lifecycle traffic in
+`gateway.yaml`. A typical deployment accepts root for remote SPANK callbacks
+and the site `SlurmUser` for `EpilogSlurmctld`:
+
+```yaml
+authentication:
+  mechanism: munge
+  accepted-uids: [root, slurm]
+  expected-plugin-name: spank_quantum
+```
 
 Configure Slurm to load the required plugin and controller epilog:
 
@@ -209,3 +240,26 @@ The retry attempts every nonterminal reservation even when an earlier QPM is
 unavailable. A stale runtime or generation is reported and retained for
 operator review; the gateway never sends an old reservation ID to a new QPM
 incarnation.
+
+Driver validation and SPANK validation cover different boundaries. The driver
+proves the shared native operation and gateway behavior for an active Slurm
+job. A final cluster check must also invoke an actual managed step and inspect
+the environment installed by the plugin:
+
+```bash
+salloc --nodes=1 --ntasks=1 --time=00:05:00
+srun --qpu=nwqsim \
+    --workload-kind=quantum \
+    --circ-count=1 \
+    --max-qubits=5 \
+    --max-depth=20 \
+    --max-shots=64 \
+    /bin/sh -c 'test -n "${QFW_RESERVATIONS}" && \
+        printf "%s\n" "${QFW_RESERVATIONS}"'
+exit
+```
+
+After the allocation exits, `qfw-slurm-gateway status JOB_ID` must report the
+allocation and every reservation as `released`. A missing response or an
+unresolved QPM release remains journaled for the `retry-release` procedure
+rather than being reported as successful.
