@@ -36,21 +36,33 @@ target_link_libraries(qsgp PUBLIC PkgConfig::MUNGE)
 target_compile_options(qsgp PRIVATE -Wall -Wextra -Werror -Wpedantic)
 set_target_properties(qsgp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(qfw_slurm_native STATIC
+add_library(qfw_slurm_client STATIC
 	src/native/qsgp_client.c
-	src/plugin/plugin_config.c
-	src/plugin/options.c
-	src/plugin/reservation_transaction.c
-	src/plugin/environment.c
+	src/native/plugin_config.c
 )
-target_include_directories(qfw_slurm_native
+target_include_directories(qfw_slurm_client
 	PUBLIC
 		${CMAKE_CURRENT_SOURCE_DIR}/src/native
 )
-target_link_libraries(qfw_slurm_native PUBLIC qsgp)
-target_compile_options(qfw_slurm_native PRIVATE
+target_link_libraries(qfw_slurm_client PUBLIC qsgp)
+target_compile_options(qfw_slurm_client PRIVATE
 	-Wall -Wextra -Werror -Wpedantic)
-set_target_properties(qfw_slurm_native PROPERTIES
+set_target_properties(qfw_slurm_client PROPERTIES
+	POSITION_INDEPENDENT_CODE ON)
+
+add_library(qfw_slurm_operations STATIC
+	src/native/options.c
+	src/native/reservation_transaction.c
+	src/native/environment.c
+)
+target_include_directories(qfw_slurm_operations
+	PUBLIC
+		${CMAKE_CURRENT_SOURCE_DIR}/src/native
+)
+target_link_libraries(qfw_slurm_operations PUBLIC qfw_slurm_client)
+target_compile_options(qfw_slurm_operations PRIVATE
+	-Wall -Wextra -Werror -Wpedantic)
+set_target_properties(qfw_slurm_operations PROPERTIES
 	POSITION_INDEPENDENT_CODE ON)
 
 if(QFW_SLURM_BUILD_PLUGIN)
@@ -60,7 +72,7 @@ if(QFW_SLURM_BUILD_PLUGIN)
 	add_library(spank_quantum MODULE src/plugin/spank_quantum.c)
 	target_include_directories(spank_quantum PRIVATE ${SLURM_INCLUDE_DIR})
 	target_link_libraries(spank_quantum PRIVATE
-		qfw_slurm_native ${SLURM_LIBRARY})
+		qfw_slurm_operations ${SLURM_LIBRARY})
 	target_compile_options(spank_quantum PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	set_target_properties(spank_quantum PROPERTIES PREFIX "")
@@ -70,7 +82,7 @@ if(QFW_SLURM_BUILD_PLUGIN)
 	add_executable(qfw-slurm-epilog src/epilog/qfw_slurm_epilog.c)
 	target_include_directories(qfw-slurm-epilog PRIVATE ${SLURM_INCLUDE_DIR})
 	target_link_libraries(qfw-slurm-epilog PRIVATE
-		qfw_slurm_native ${SLURM_LIBRARY})
+		qfw_slurm_operations ${SLURM_LIBRARY})
 	target_compile_options(qfw-slurm-epilog PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	install(TARGETS qfw-slurm-epilog
@@ -99,7 +111,7 @@ if(QFW_SLURM_BUILD_TESTS)
 		-Wall -Wextra -Werror -Wpedantic)
 
 	add_executable(test_qfw_native tests/unit/test_qfw_native.c)
-	target_link_libraries(test_qfw_native PRIVATE qfw_slurm_native)
+	target_link_libraries(test_qfw_native PRIVATE qfw_slurm_operations)
 	target_compile_options(test_qfw_native PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	add_test(NAME qfw_native COMMAND test_qfw_native)
