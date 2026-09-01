@@ -139,6 +139,10 @@ if(QFW_SLURM_BUILD_TESTS)
 	find_package(Python3 COMPONENTS Interpreter)
 	if(Python3_Interpreter_FOUND)
 		execute_process(
+			COMMAND ${Python3_EXECUTABLE} -c "import yaml"
+			RESULT_VARIABLE QFW_SLURM_SYSTEM_TEST_DEPS
+			ERROR_QUIET)
+		execute_process(
 			COMMAND ${Python3_EXECUTABLE} -c "import pytest, yaml"
 			RESULT_VARIABLE QFW_SLURM_PYTHON_TEST_DEPS
 			ERROR_QUIET)
@@ -152,6 +156,17 @@ if(QFW_SLURM_BUILD_TESTS)
 		else()
 			message(STATUS
 				"Skipping gateway tests: pytest and PyYAML are required")
+		endif()
+		if(QFW_SLURM_BUILD_DRIVER AND
+		   QFW_SLURM_SYSTEM_TEST_DEPS EQUAL 0)
+			add_test(NAME driver_gateway_system
+				COMMAND ${CMAKE_COMMAND} -E env
+					PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/gateway:${CMAKE_CURRENT_SOURCE_DIR}
+					QFW_TEST_PYTHON=${Python3_EXECUTABLE}
+					${CMAKE_CURRENT_SOURCE_DIR}/tests/system/test_driver_gateway.sh
+					$<TARGET_FILE:qfw-slurm-driver>)
+			set_tests_properties(driver_gateway_system PROPERTIES
+				SKIP_RETURN_CODE 77 TIMEOUT 60)
 		endif()
 	endif()
 endif()
