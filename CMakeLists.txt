@@ -10,6 +10,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(QFW_SLURM_BUILD_PLUGIN "Build the Slurm SPANK plugin" ON)
+option(QFW_SLURM_BUILD_DRIVER "Build the standalone diagnostic driver" ON)
 option(QFW_SLURM_BUILD_TESTS "Build native tests" ON)
 set(QFW_SLURM_PLUGIN_DIR "${CMAKE_INSTALL_LIBDIR}/slurm" CACHE PATH
 	"Slurm plugin installation directory")
@@ -66,6 +67,15 @@ target_compile_options(qfw_slurm_operations PRIVATE
 set_target_properties(qfw_slurm_operations PROPERTIES
 	POSITION_INDEPENDENT_CODE ON)
 
+if(QFW_SLURM_BUILD_DRIVER)
+	add_executable(qfw-slurm-driver src/driver/qfw_slurm_driver.c)
+	target_link_libraries(qfw-slurm-driver PRIVATE qfw_slurm_operations)
+	target_compile_options(qfw-slurm-driver PRIVATE
+		-Wall -Wextra -Werror -Wpedantic)
+	install(TARGETS qfw-slurm-driver
+		RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 if(QFW_SLURM_BUILD_PLUGIN)
 	find_path(SLURM_INCLUDE_DIR slurm/spank.h REQUIRED)
 	find_library(SLURM_LIBRARY slurm REQUIRED)
@@ -120,6 +130,11 @@ if(QFW_SLURM_BUILD_TESTS)
 	target_compile_options(test_gateway_client PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	add_test(NAME gateway_client COMMAND test_gateway_client)
+	if(QFW_SLURM_BUILD_DRIVER)
+		add_test(NAME driver_cli
+			COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_driver_cli.sh
+				$<TARGET_FILE:qfw-slurm-driver>)
+	endif()
 
 	find_package(Python3 COMPONENTS Interpreter)
 	if(Python3_Interpreter_FOUND)

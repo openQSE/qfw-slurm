@@ -4,7 +4,7 @@
 reservations. It is intentionally separate from QFw and does not add a Slurm
 dependency to the QFw build.
 
-The repository provides three runtime components:
+The repository provides four runtime components:
 
 - `spank_quantum.so` parses bounded workload options and acquires an atomic
   reservation set before a managed task starts.
@@ -13,6 +13,8 @@ The repository provides three runtime components:
 - `qfw-slurm-gateway` authenticates native requests with MUNGE, verifies job
   identity with `slurmctld`, discovers exact QPM service IDs through DEFw, and
   journals QPM reserve and release operations in SQLite.
+- `qfw-slurm-driver` exercises the same native reservation operations without
+  loading a SPANK callback or linking to libslurm.
 
 The native and Python components communicate through QSGP version 1. QSGP
 uses an explicit network-byte-order header and bounded TLV records inside a
@@ -34,6 +36,41 @@ ctest --test-dir build --output-on-failure
 The test suite checks strict native decoding, Python decoding, C/Python wire
 interoperability, option validation, durable replay, request conflicts,
 allocation-level rollback, exhaustive release, and stale QPM incarnations.
+
+## Run the standalone driver
+
+The driver is a diagnostic frontend, not a substitute for a SPANK integration
+test. It accepts the allocation identity that Slurm normally supplies and uses
+the production configuration, MUNGE, QSGP client, response validation, and
+gateway. The production gateway accepts only an active job identity verified
+through `slurmctld`.
+
+Run a complete reserve and release lifecycle for an active allocation:
+
+```bash
+qfw-slurm-driver lifecycle \
+    --config /etc/qfw-slurm/plugin.conf \
+    --cluster qfw-slurm \
+    --job-id 123 \
+    --uid 1001 \
+    --gid 1001 \
+    --allocation-epoch 1788000000 \
+    --walltime-seconds 900 \
+    --qpu nwqsim \
+    --workload-kind quantum \
+    --circ-count 2 \
+    --max-qubits 5 \
+    --max-depth 100 \
+    --max-shots 1024
+```
+
+Use `reserve` or `release` for one operation. `--json` emits one versioned JSON
+record per operation. `--hold-seconds` keeps an accepted lifecycle at a
+controlled point before release; SIGINT and SIGTERM cause one bounded release
+attempt. `qfw-slurm-driver --help` lists the complete option set and the
+explicit metadata required for each command. Successful human-readable reserve
+output includes the exact `QFW_RESERVATIONS` value that the SPANK adapter would
+export.
 
 ## Install
 
