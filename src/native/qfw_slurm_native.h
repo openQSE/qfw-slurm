@@ -14,6 +14,20 @@
 #define QFW_PLUGIN_MAX_RESOURCES QSGP_MAX_SERVICES
 #define QFW_PLUGIN_MAX_ERROR QSGP_MAX_DIAGNOSTIC
 
+enum qfw_gateway_status {
+	QFW_GATEWAY_OK = 0,
+	QFW_GATEWAY_ERR_REMOTE = -100,
+};
+
+enum qfw_gateway_error_source {
+	QFW_GATEWAY_ERROR_NONE = 0,
+	QFW_GATEWAY_ERROR_LOCAL,
+	QFW_GATEWAY_ERROR_TRANSPORT,
+	QFW_GATEWAY_ERROR_AUTHENTICATION,
+	QFW_GATEWAY_ERROR_PROTOCOL,
+	QFW_GATEWAY_ERROR_REMOTE,
+};
+
 enum qfw_option_field {
 	QFW_OPTION_QPU = 1U << 0,
 	QFW_OPTION_WORKLOAD_KIND = 1U << 1,
@@ -42,6 +56,21 @@ struct qfw_plugin_config {
 	struct qfw_resource_mapping resources[QFW_PLUGIN_MAX_RESOURCES];
 };
 
+struct qfw_gateway_client {
+	char host[QFW_PLUGIN_MAX_HOST + 1U];
+	char port[QFW_PLUGIN_MAX_PORT + 1U];
+	uint32_t connect_timeout_ms;
+	uint32_t request_timeout_ms;
+	size_t max_credential_bytes;
+	uid_t expected_munge_uid;
+};
+
+struct qfw_gateway_call_error {
+	uint32_t source;
+	int qsgp_status;
+	struct qsgp_error_response remote;
+};
+
 struct qfw_quantum_options {
 	bool active;
 	char qpu_names[QSGP_MAX_SERVICES]
@@ -49,14 +78,6 @@ struct qfw_quantum_options {
 	size_t qpu_count;
 	struct qsgp_workload workload;
 	uint32_t present_fields;
-};
-
-struct qfw_gateway_result {
-	bool is_error;
-	struct qsgp_header header;
-	struct qsgp_reserve_response reserve;
-	struct qsgp_release_response release;
-	struct qsgp_error_response error;
 };
 
 void qfw_plugin_config_init(struct qfw_plugin_config *config);
@@ -85,11 +106,19 @@ int qfw_build_reserve_request(const struct qfw_plugin_config *config,
 int qfw_reservations_json(const struct qsgp_reserve_response *response,
 	char *output, size_t output_size);
 
-int qfw_gateway_reserve(const struct qfw_plugin_config *config,
-	const struct qsgp_reserve_request *request, uint64_t correlation_id,
-	struct qfw_gateway_result *result);
-int qfw_gateway_release(const struct qfw_plugin_config *config,
-	const struct qsgp_release_request *request, uint64_t correlation_id,
-	struct qfw_gateway_result *result);
+int qfw_gateway_client_init(struct qfw_gateway_client *client,
+	const struct qfw_plugin_config *config, char *error, size_t error_size);
+void qfw_gateway_client_destroy(struct qfw_gateway_client *client);
+const char *qfw_gateway_call_error_message(
+	const struct qfw_gateway_call_error *error);
+
+int qfw_gateway_reserve(const struct qfw_gateway_client *client,
+	const struct qsgp_reserve_request *request,
+	struct qsgp_reserve_response *response,
+	struct qfw_gateway_call_error *error);
+int qfw_gateway_release(const struct qfw_gateway_client *client,
+	const struct qsgp_release_request *request,
+	struct qsgp_release_response *response,
+	struct qfw_gateway_call_error *error);
 
 #endif

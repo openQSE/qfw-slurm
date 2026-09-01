@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include <slurm/slurm.h>
 #include <slurm/spank.h>
@@ -19,6 +18,7 @@ SPANK_PLUGIN(spank_quantum, 1)
 #define RESERVATIONS_ENV_SIZE 16384U
 
 static struct qfw_plugin_config plugin_config;
+static struct qfw_gateway_client gateway_client;
 static struct qfw_quantum_options quantum_options;
 static bool launch_failed;
 static char deferred_error[QFW_PLUGIN_MAX_ERROR + 1U];
@@ -106,7 +106,9 @@ int slurm_spank_init(spank_t spank, int argc, char **argv)
 		return SLURM_ERROR;
 	}
 	if (qfw_plugin_config_load(config_path, &plugin_config, error,
-		sizeof(error)) != 0) {
+		sizeof(error)) != 0 ||
+	    qfw_gateway_client_init(&gateway_client, &plugin_config, error,
+		sizeof(error)) != QFW_GATEWAY_OK) {
 		slurm_error("%s: %s", plugin_name, error);
 		return SLURM_ERROR;
 	}
@@ -148,18 +150,6 @@ static job_info_t *find_job(job_info_msg_t *message, uint32_t job_id)
 			return &message->job_array[index];
 	}
 	return message->record_count == 1 ? &message->job_array[0] : NULL;
-}
-
-static uint64_t correlation_id(uint64_t request_id)
-{
-	struct timespec now;
-	uint64_t value = request_id ^ (uint64_t)getpid();
-
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
-		value ^= (uint64_t)now.tv_sec;
-		value ^= (uint64_t)now.tv_nsec << 32U;
-	}
-	return value == 0 ? UINT64_MAX : value;
 }
 
 static int build_request(spank_t spank,
@@ -225,24 +215,17 @@ out:
 	return result;
 }
 
-static void remember_gateway_failure(int status,
-	const struct qfw_gateway_result *result)
+static void remember_gateway_failure(
+	const struct qfw_gateway_call_error *error)
 {
-	const char *message = qsgp_status_string(status);
-
-	if (status == QSGP_OK && result->is_error) {
-		if (result->error.has_diagnostic)
-			message = result->error.diagnostic;
-		else
-			message = "gateway rejected the reservation request";
-	}
-	remember_error(message);
+	remember_error(qfw_gateway_call_error_message(error));
 }
 
 int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 {
 	struct qsgp_reserve_request request;
-	struct qfw_gateway_result result;
+	struct qsgp_reserve_response response;
+	struct qfw_gateway_call_error call_error;
 	char reservations[RESERVATIONS_ENV_SIZE];
 	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
 	int status;
@@ -267,17 +250,16 @@ int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 		remember_error(error);
 		return SLURM_SUCCESS;
 	}
-	status = qfw_gateway_reserve(&plugin_config, &request,
-		correlation_id(request.request_id), &result);
-	if (status != QSGP_OK || result.is_error) {
-		remember_gateway_failure(status, &result);
+	status = qfw_gateway_reserve(&gateway_client, &request, &response,
+		&call_error);
+	if (status != QFW_GATEWAY_OK) {
+		remember_gateway_failure(&call_error);
 		return SLURM_SUCCESS;
 	}
-	if (result.reserve.request_id != request.request_id ||
-	    result.reserve.decision != QSGP_ADMISSION_ACCEPTED) {
+	if (response.request_id != request.request_id ||
+	    response.decision != QSGP_ADMISSION_ACCEPTED) {
 		const struct qsgp_service_result *decisive =
-			result.reserve.result_count != 0 ?
-			&result.reserve.results[0] : NULL;
+			response.result_count != 0 ? &response.results[0] : NULL;
 
 		if (decisive != NULL && decisive->has_diagnostic)
 			remember_error(decisive->diagnostic);
@@ -285,7 +267,7 @@ int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 			remember_error("QPM reservation was not accepted");
 		return SLURM_SUCCESS;
 	}
-	if (qfw_reservations_json(&result.reserve, reservations,
+	if (qfw_reservations_json(&response, reservations,
 		sizeof(reservations)) != 0 ||
 	    spank_setenv(spank, "QFW_RESERVATIONS", reservations, 1) !=
 		ESPANK_SUCCESS) {
@@ -293,7 +275,7 @@ int slurm_spank_init_post_opt(spank_t spank, int argc, char **argv)
 		return SLURM_SUCCESS;
 	}
 	slurm_info("%s: request=%" PRIu64 " services=%zu decision=accepted",
-		plugin_name, request.request_id, result.reserve.result_count);
+		plugin_name, request.request_id, response.result_count);
 	return SLURM_SUCCESS;
 }
 
@@ -314,6 +296,7 @@ int slurm_spank_exit(spank_t spank, int argc, char **argv)
 	(void)argc;
 	(void)argv;
 	qfw_quantum_options_init(&quantum_options);
+	qfw_gateway_client_destroy(&gateway_client);
 	launch_failed = false;
 	deferred_error[0] = '\0';
 	return SLURM_SUCCESS;

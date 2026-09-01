@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include <slurm/slurm.h>
 
@@ -79,23 +78,15 @@ out:
 	return result;
 }
 
-static uint64_t correlation_id(uint64_t request_id)
-{
-	struct timespec now;
-	uint64_t value = request_id ^ (uint64_t)getpid();
-
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
-		value ^= (uint64_t)now.tv_nsec << 16U;
-	return value == 0 ? UINT64_MAX : value;
-}
-
 int main(int argc, char **argv)
 {
 	const char *config_path = DEFAULT_CONFIG_PATH;
 	const char *job_value = getenv("SLURM_JOB_ID");
 	struct qfw_plugin_config config;
+	struct qfw_gateway_client client;
 	struct qsgp_release_request request;
-	struct qfw_gateway_result result;
+	struct qsgp_release_response response;
+	struct qfw_gateway_call_error call_error;
 	char cluster[QSGP_MAX_CLUSTER_NAME + 1U];
 	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
 	uint64_t supplied_job_id;
@@ -119,9 +110,16 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	if (qfw_plugin_config_load(config_path, &config, error,
-		sizeof(error)) != 0 || cluster_name(cluster, sizeof(cluster)) != 0) {
+		sizeof(error)) != 0 ||
+	    qfw_gateway_client_init(&client, &config, error,
+		sizeof(error)) != QFW_GATEWAY_OK) {
 		fprintf(stderr, "qfw-slurm-epilog: %s\n",
-			error[0] != '\0' ? error : "cannot read cluster name");
+			error[0] != '\0' ? error : "cannot configure gateway client");
+		return 0;
+	}
+	if (cluster_name(cluster, sizeof(cluster)) != 0) {
+		fprintf(stderr, "qfw-slurm-epilog: cannot read cluster name\n");
+		qfw_gateway_client_destroy(&client);
 		return 0;
 	}
 	memset(&request, 0, sizeof(request));
@@ -131,22 +129,16 @@ int main(int argc, char **argv)
 		"%s", cluster);
 	request.request_id = qfw_request_id(cluster, job_id, 0,
 		QSGP_RELEASE_REQUEST);
-	status = qfw_gateway_release(&config, &request,
-		correlation_id(request.request_id), &result);
-	if (status != QSGP_OK) {
-		fprintf(stderr, "qfw-slurm-epilog: release transport failed: %s\n",
-			qsgp_status_string(status));
-		return 0;
-	}
-	if (result.is_error) {
+	status = qfw_gateway_release(&client, &request, &response, &call_error);
+	qfw_gateway_client_destroy(&client);
+	if (status != QFW_GATEWAY_OK) {
 		fprintf(stderr, "qfw-slurm-epilog: gateway release failed: %s\n",
-			result.error.has_diagnostic ? result.error.diagnostic :
-			"gateway error");
+			qfw_gateway_call_error_message(&call_error));
 		return 0;
 	}
-	for (index = 0; index < result.release.result_count; index++) {
+	for (index = 0; index < response.result_count; index++) {
 		const struct qsgp_release_result *item =
-			&result.release.results[index];
+			&response.results[index];
 
 		if (item->state >= QSGP_RESERVATION_QPM_FAILURE)
 			fprintf(stderr,

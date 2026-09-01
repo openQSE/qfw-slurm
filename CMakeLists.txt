@@ -116,6 +116,12 @@ if(QFW_SLURM_BUILD_TESTS)
 		-Wall -Wextra -Werror -Wpedantic)
 	add_test(NAME qfw_native COMMAND test_qfw_native)
 
+	add_executable(test_gateway_client tests/unit/test_gateway_client.c)
+	target_link_libraries(test_gateway_client PRIVATE qfw_slurm_client)
+	target_compile_options(test_gateway_client PRIVATE
+		-Wall -Wextra -Werror -Wpedantic)
+	add_test(NAME gateway_client COMMAND test_gateway_client)
+
 	find_package(Python3 COMPONENTS Interpreter)
 	if(Python3_Interpreter_FOUND)
 		execute_process(
