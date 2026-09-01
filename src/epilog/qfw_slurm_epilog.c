@@ -5,9 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#include <slurm/slurm.h>
 
 #include "qfw_slurm_native.h"
 
@@ -28,70 +25,45 @@ static int parse_u64(const char *value, uint64_t *output)
 	return 0;
 }
 
-static int cluster_name(char *output, size_t output_size)
+static int copy_cluster_name(const char *value, char *output,
+	size_t output_size)
 {
-	slurm_conf_t *configuration = NULL;
-	int status = slurm_load_ctl_conf((time_t)0, &configuration);
-
-	if (status != SLURM_SUCCESS || configuration == NULL ||
-	    configuration->cluster_name == NULL ||
-	    strlen(configuration->cluster_name) >= output_size) {
-		if (configuration != NULL)
-			slurm_free_ctl_conf(configuration);
+	if (value == NULL || *value == '\0' || strlen(value) >= output_size)
 		return -1;
-	}
-	(void)snprintf(output, output_size, "%s", configuration->cluster_name);
-	slurm_free_ctl_conf(configuration);
+	(void)snprintf(output, output_size, "%s", value);
 	return 0;
 }
 
-static job_info_t *find_job(job_info_msg_t *message, uint32_t job_id)
+static int load_allocation_identity(struct qfw_allocation_context *allocation)
 {
-	uint32_t index;
+	const char *heterogeneous = getenv("SLURM_HET_JOB_ID");
+	const char *start_time = getenv("SLURM_JOB_START_TIME");
+	uint64_t job_id;
 
-	for (index = 0; index < message->record_count; index++) {
-		if (message->job_array[index].job_id == job_id)
-			return &message->job_array[index];
-	}
-	return message->record_count == 1 ? &message->job_array[0] : NULL;
-}
-
-static int canonical_job_id(uint64_t supplied, uint64_t *canonical)
-{
-	job_info_msg_t *message = NULL;
-	job_info_t *job;
-	int result = -1;
-
-	if (supplied > UINT32_MAX ||
-	    slurm_load_job(&message, (uint32_t)supplied, SHOW_ALL) !=
-		SLURM_SUCCESS || message == NULL)
-		goto out;
-	job = find_job(message, (uint32_t)supplied);
-	if (job == NULL)
-		goto out;
-	*canonical = job->het_job_id != 0 && job->het_job_id != NO_VAL ?
-		job->het_job_id : supplied;
-	result = 0;
-out:
-	if (message != NULL)
-		slurm_free_job_info_msg(message);
-	return result;
+	memset(allocation, 0, sizeof(*allocation));
+	if (parse_u64(getenv("SLURM_JOB_ID"), &job_id) != 0 ||
+	    copy_cluster_name(getenv("SLURM_CLUSTER_NAME"),
+		allocation->cluster_name,
+		sizeof(allocation->cluster_name)) != 0)
+		return -1;
+	allocation->canonical_job_id = job_id;
+	if (heterogeneous != NULL && *heterogeneous != '\0' &&
+	    parse_u64(heterogeneous, &allocation->canonical_job_id) != 0)
+		return -1;
+	if (start_time != NULL && *start_time != '\0' &&
+	    parse_u64(start_time, &allocation->allocation_epoch) != 0)
+		return -1;
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
 	const char *config_path = DEFAULT_CONFIG_PATH;
-	const char *job_value = getenv("SLURM_JOB_ID");
 	struct qfw_plugin_config config;
 	struct qfw_gateway_client client;
-	struct qsgp_release_request request;
-	struct qsgp_release_response response;
-	struct qfw_gateway_call_error call_error;
-	char cluster[QSGP_MAX_CLUSTER_NAME + 1U];
+	struct qfw_allocation_context allocation = {0};
+	struct qfw_release_operation_result operation;
 	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
-	uint64_t supplied_job_id;
-	uint64_t job_id;
-	int status;
 	size_t index;
 
 	if (argc == 3 && strcmp(argv[1], "--config") == 0)
@@ -100,13 +72,9 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: %s [--config PATH]\n", argv[0]);
 		return 2;
 	}
-	if (parse_u64(job_value, &supplied_job_id) != 0) {
-		fprintf(stderr, "qfw-slurm-epilog: SLURM_JOB_ID is invalid\n");
-		return 0;
-	}
-	if (canonical_job_id(supplied_job_id, &job_id) != 0) {
+	if (load_allocation_identity(&allocation) != 0) {
 		fprintf(stderr,
-			"qfw-slurm-epilog: cannot load authoritative Slurm job\n");
+			"qfw-slurm-epilog: callback identity is invalid\n");
 		return 0;
 	}
 	if (qfw_plugin_config_load(config_path, &config, error,
@@ -115,36 +83,37 @@ int main(int argc, char **argv)
 		sizeof(error)) != QFW_GATEWAY_OK) {
 		fprintf(stderr, "qfw-slurm-epilog: %s\n",
 			error[0] != '\0' ? error : "cannot configure gateway client");
-		return 0;
+		goto out;
 	}
-	if (cluster_name(cluster, sizeof(cluster)) != 0) {
-		fprintf(stderr, "qfw-slurm-epilog: cannot read cluster name\n");
+	if (qfw_release_operation(&client, &allocation, 0, &operation) != 0) {
+		fprintf(stderr,
+			"qfw-slurm-epilog: cannot execute release operation\n");
 		qfw_gateway_client_destroy(&client);
-		return 0;
+		goto out;
 	}
-	memset(&request, 0, sizeof(request));
-	request.canonical_job_id = job_id;
-	request.reason = 0;
-	(void)snprintf(request.cluster_name, sizeof(request.cluster_name),
-		"%s", cluster);
-	request.request_id = qfw_request_id(cluster, job_id, 0,
-		QSGP_RELEASE_REQUEST);
-	status = qfw_gateway_release(&client, &request, &response, &call_error);
 	qfw_gateway_client_destroy(&client);
-	if (status != QFW_GATEWAY_OK) {
-		fprintf(stderr, "qfw-slurm-epilog: gateway release failed: %s\n",
-			qfw_gateway_call_error_message(&call_error));
-		return 0;
+	if (operation.state != QFW_OPERATION_RELEASED &&
+	    operation.state != QFW_OPERATION_RELEASE_UNRESOLVED) {
+		fprintf(stderr, "qfw-slurm-epilog: release failed: %s\n",
+			operation.diagnostic[0] != '\0' ? operation.diagnostic :
+			"unknown release failure");
+		goto out;
 	}
-	for (index = 0; index < response.result_count; index++) {
+	for (index = 0; index < operation.response.result_count; index++) {
 		const struct qsgp_release_result *item =
-			&response.results[index];
+			&operation.response.results[index];
 
-		if (item->state >= QSGP_RESERVATION_QPM_FAILURE)
+		if (item->state == QSGP_RESERVATION_AUTHORIZATION_FAILURE ||
+		    item->state == QSGP_RESERVATION_QPM_FAILURE ||
+		    item->state == QSGP_RESERVATION_GATEWAY_FAILURE)
 			fprintf(stderr,
 				"qfw-slurm-epilog: unresolved service=%s "
-				"reservation=%" PRIu64 " state=%u\n",
-				item->service_id, item->reservation_id, item->state);
+				"reservation=%" PRIu64 " state=%u error=%u%s%s\n",
+				item->service_id, item->reservation_id, item->state,
+				item->has_gateway_error ? item->gateway_error : 0,
+				item->has_diagnostic ? " diagnostic=" : "",
+				item->has_diagnostic ? item->diagnostic : "");
 	}
+out:
 	return 0;
 }

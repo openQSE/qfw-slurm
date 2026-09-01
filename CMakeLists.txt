@@ -81,9 +81,7 @@ if(QFW_SLURM_BUILD_PLUGIN)
 		LIBRARY DESTINATION ${QFW_SLURM_PLUGIN_DIR})
 
 	add_executable(qfw-slurm-epilog src/epilog/qfw_slurm_epilog.c)
-	target_include_directories(qfw-slurm-epilog PRIVATE ${SLURM_INCLUDE_DIR})
-	target_link_libraries(qfw-slurm-epilog PRIVATE
-		qfw_slurm_operations ${SLURM_LIBRARY})
+	target_link_libraries(qfw-slurm-epilog PRIVATE qfw_slurm_operations)
 	target_compile_options(qfw-slurm-epilog PRIVATE
 		-Wall -Wextra -Werror -Wpedantic)
 	install(TARGETS qfw-slurm-epilog
