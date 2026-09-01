@@ -200,10 +200,144 @@ static int test_request_and_environment(void)
 	return 0;
 }
 
+static void accepted_result(struct qsgp_service_result *result,
+	const char *service_id, uint64_t reservation_id)
+{
+	memset(result, 0, sizeof(*result));
+	(void)snprintf(result->service_id, sizeof(result->service_id), "%s",
+		service_id);
+	result->decision = QSGP_ADMISSION_ACCEPTED;
+	result->reservation_id = reservation_id;
+	result->has_reservation_id = true;
+}
+
+static int test_reserve_response_processing(void)
+{
+	struct qsgp_reserve_request request = {
+		.request_id = 91,
+		.service_count = 2,
+		.service_ids = {"iqm-site", "nwqsim-site"},
+	};
+	struct qsgp_reserve_response response = {
+		.request_id = 91,
+		.decision = QSGP_ADMISSION_ACCEPTED,
+		.result_count = 2,
+	};
+	struct qfw_reserve_operation_result result = {0};
+
+	accepted_result(&response.results[0], "nwqsim-site", UINT64_MAX);
+	accepted_result(&response.results[1], "iqm-site", 41);
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_ACCEPTED);
+	CHECK(strcmp(result.reservations_json,
+		"[[\"iqm-site\",\"41\"],"
+		"[\"nwqsim-site\",\"18446744073709551615\"]]") == 0);
+
+	memset(&result, 0, sizeof(result));
+	response.result_count = 1;
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+
+	memset(&result, 0, sizeof(result));
+	response.result_count = 2;
+	accepted_result(&response.results[1], "nwqsim-site", 42);
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+
+	memset(&result, 0, sizeof(result));
+	accepted_result(&response.results[1], "iqm-site", 0);
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+
+	memset(&result, 0, sizeof(result));
+	response.request_id = 92;
+	accepted_result(&response.results[1], "iqm-site", 42);
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+
+	memset(&result, 0, sizeof(result));
+	memset(&response, 0, sizeof(response));
+	response.request_id = request.request_id;
+	response.decision = QSGP_ADMISSION_DELAYED;
+	response.result_count = 1;
+	(void)snprintf(response.results[0].service_id,
+		sizeof(response.results[0].service_id), "iqm-site");
+	response.results[0].decision = QSGP_ADMISSION_DELAYED;
+	response.results[0].has_diagnostic = true;
+	(void)snprintf(response.results[0].diagnostic,
+		sizeof(response.results[0].diagnostic), "capacity pending");
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_DELAYED);
+	CHECK(strcmp(result.diagnostic, "capacity pending") == 0);
+
+	memset(&result, 0, sizeof(result));
+	response.decision = QSGP_ADMISSION_REJECTED;
+	response.results[0].decision = QSGP_ADMISSION_REJECTED;
+	response.results[0].has_diagnostic = false;
+	CHECK(qfw_reserve_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_REJECTED);
+	return 0;
+}
+
+static int test_release_response_processing(void)
+{
+	struct qsgp_release_request request = {.request_id = 72};
+	struct qsgp_release_response response = {
+		.request_id = 72,
+		.result_count = 3,
+		.results = {
+			{
+				.service_id = "service-a",
+				.reservation_id = 1,
+				.state = QSGP_RESERVATION_RELEASED,
+			},
+			{
+				.service_id = "service-b",
+				.reservation_id = 2,
+				.state = QSGP_RESERVATION_QPM_FAILURE,
+				.diagnostic = "QPM unavailable",
+				.has_diagnostic = true,
+			},
+			{
+				.service_id = "service-c",
+				.reservation_id = 3,
+				.state = QSGP_RESERVATION_GATEWAY_FAILURE,
+			},
+		},
+	};
+	struct qfw_release_operation_result result = {0};
+
+	CHECK(qfw_release_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RELEASE_UNRESOLVED);
+	CHECK(result.unresolved_count == 2);
+	CHECK(strcmp(result.diagnostic, "QPM unavailable") == 0);
+
+	memset(&result, 0, sizeof(result));
+	response.results[1].state = QSGP_RESERVATION_NOT_FOUND;
+	response.results[2].state = QSGP_RESERVATION_STALE_RUNTIME;
+	CHECK(qfw_release_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RELEASED);
+	CHECK(result.unresolved_count == 0);
+
+	memset(&result, 0, sizeof(result));
+	response.results[2].state = 999;
+	CHECK(qfw_release_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+
+	memset(&result, 0, sizeof(result));
+	response.results[2].state = QSGP_RESERVATION_RELEASED;
+	response.request_id = 73;
+	CHECK(qfw_release_response_process(&request, &response, &result) == 0);
+	CHECK(result.state == QFW_OPERATION_RESPONSE_ERROR);
+	return 0;
+}
+
 int main(void)
 {
 	CHECK(test_config() == 0);
 	CHECK(test_options() == 0);
 	CHECK(test_request_and_environment() == 0);
+	CHECK(test_reserve_response_processing() == 0);
+	CHECK(test_release_response_processing() == 0);
 	return 0;
 }

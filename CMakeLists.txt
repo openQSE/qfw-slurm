@@ -54,6 +54,7 @@ add_library(qfw_slurm_operations STATIC
 	src/native/options.c
 	src/native/reservation_transaction.c
 	src/native/environment.c
+	src/native/operations.c
 )
 target_include_directories(qfw_slurm_operations
 	PUBLIC

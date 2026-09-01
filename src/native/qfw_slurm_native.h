@@ -13,6 +13,7 @@
 #define QFW_PLUGIN_MAX_RESOURCE_NAME 128U
 #define QFW_PLUGIN_MAX_RESOURCES QSGP_MAX_SERVICES
 #define QFW_PLUGIN_MAX_ERROR QSGP_MAX_DIAGNOSTIC
+#define QFW_RESERVATIONS_ENV_SIZE 16384U
 
 enum qfw_gateway_status {
 	QFW_GATEWAY_OK = 0,
@@ -26,6 +27,18 @@ enum qfw_gateway_error_source {
 	QFW_GATEWAY_ERROR_AUTHENTICATION,
 	QFW_GATEWAY_ERROR_PROTOCOL,
 	QFW_GATEWAY_ERROR_REMOTE,
+};
+
+enum qfw_operation_state {
+	QFW_OPERATION_INVALID = 0,
+	QFW_OPERATION_ACCEPTED,
+	QFW_OPERATION_DELAYED,
+	QFW_OPERATION_REJECTED,
+	QFW_OPERATION_CLIENT_ERROR,
+	QFW_OPERATION_GATEWAY_ERROR,
+	QFW_OPERATION_RESPONSE_ERROR,
+	QFW_OPERATION_RELEASED,
+	QFW_OPERATION_RELEASE_UNRESOLVED,
 };
 
 enum qfw_option_field {
@@ -69,6 +82,36 @@ struct qfw_gateway_call_error {
 	uint32_t source;
 	int qsgp_status;
 	struct qsgp_error_response remote;
+};
+
+struct qfw_allocation_context {
+	char cluster_name[QSGP_MAX_CLUSTER_NAME + 1U];
+	uint64_t canonical_job_id;
+	uint64_t allocation_epoch;
+	uid_t job_uid;
+	gid_t job_gid;
+	uint64_t walltime_ns;
+	uint64_t hetero_job_id;
+	uint32_t hetero_component;
+	bool has_hetero;
+};
+
+struct qfw_reserve_operation_result {
+	uint32_t state;
+	struct qsgp_reserve_request request;
+	struct qsgp_reserve_response response;
+	struct qfw_gateway_call_error call_error;
+	char reservations_json[QFW_RESERVATIONS_ENV_SIZE];
+	char diagnostic[QFW_PLUGIN_MAX_ERROR + 1U];
+};
+
+struct qfw_release_operation_result {
+	uint32_t state;
+	struct qsgp_release_request request;
+	struct qsgp_release_response response;
+	struct qfw_gateway_call_error call_error;
+	size_t unresolved_count;
+	char diagnostic[QFW_PLUGIN_MAX_ERROR + 1U];
 };
 
 struct qfw_quantum_options {
@@ -120,5 +163,23 @@ int qfw_gateway_release(const struct qfw_gateway_client *client,
 	const struct qsgp_release_request *request,
 	struct qsgp_release_response *response,
 	struct qfw_gateway_call_error *error);
+
+int qfw_reserve_operation(const struct qfw_gateway_client *client,
+	const struct qfw_plugin_config *config,
+	const struct qfw_quantum_options *options,
+	const struct qfw_allocation_context *allocation,
+	struct qfw_reserve_operation_result *result);
+int qfw_release_operation(const struct qfw_gateway_client *client,
+	const struct qfw_allocation_context *allocation, uint32_t reason,
+	struct qfw_release_operation_result *result);
+
+int qfw_reserve_response_process(
+	const struct qsgp_reserve_request *request,
+	const struct qsgp_reserve_response *response,
+	struct qfw_reserve_operation_result *result);
+int qfw_release_response_process(
+	const struct qsgp_release_request *request,
+	const struct qsgp_release_response *response,
+	struct qfw_release_operation_result *result);
 
 #endif
