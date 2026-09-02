@@ -120,6 +120,48 @@ class ReleaseFailingAdapter(FakeAdapter):
         raise RuntimeError("configured release failure")
 
 
+class CapacityOneAdapter(FakeAdapter):
+    def __init__(self):
+        super().__init__()
+        self.held_by = None
+
+    def evaluate(self, binding, request, job):
+        self.evaluates.append((job.canonical_job_id, binding.service_id))
+        return ServiceResult(
+            binding.service_id,
+            AdmissionDecision.ACCEPTED,
+            0,
+            qpm_runtime_id=binding.runtime_id,
+            qpm_generation=binding.generation,
+        )
+
+    def reserve(self, binding, request, job):
+        self.reserves.append((job.canonical_job_id, binding.service_id))
+        if (self.held_by is not None and
+                self.held_by != job.canonical_job_id):
+            return ServiceResult(
+                binding.service_id,
+                AdmissionDecision.DELAYED,
+                9,
+                qpm_runtime_id=binding.runtime_id,
+                qpm_generation=binding.generation,
+            )
+        self.held_by = job.canonical_job_id
+        return ServiceResult(
+            binding.service_id,
+            AdmissionDecision.ACCEPTED,
+            0,
+            reservation_id=40 + job.canonical_job_id,
+            qpm_runtime_id=binding.runtime_id,
+            qpm_generation=binding.generation,
+        )
+
+    def release(self, binding, reservation_id, reason):
+        self.releases.append((binding.service_id, reservation_id, reason))
+        self.held_by = None
+        return {"status": "released"}
+
+
 def request(request_id=1):
     return ReserveRequest(
         request_id,
@@ -134,6 +176,60 @@ def request(request_id=1):
 
 def evaluate_request(request_id=1):
     return EvaluateRequest(**request(request_id).__dict__)
+
+
+def single_service_request(job_id, request_id, evaluate=False):
+    value = dataclasses.replace(
+        request(request_id),
+        canonical_job_id=job_id,
+        service_ids=("svc-a",),
+    )
+    return EvaluateRequest(**value.__dict__) if evaluate else value
+
+
+def test_competing_jobs_reenter_evaluation_after_final_delay(tmp_path) -> None:
+    asyncio.run(_competing_jobs_reenter_evaluation_after_final_delay(tmp_path))
+
+
+async def _competing_jobs_reenter_evaluation_after_final_delay(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = CapacityOneAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    first_evaluation = await service.handle(
+        single_service_request(100, 1001, evaluate=True), 1001
+    )
+    second_evaluation = await service.handle(
+        single_service_request(101, 1002, evaluate=True), 1001
+    )
+    first_reserve = await service.handle(
+        single_service_request(100, 1003), 1001
+    )
+    second_delayed = await service.handle(
+        single_service_request(101, 1004), 1001
+    )
+
+    assert first_evaluation.decision == AdmissionDecision.ACCEPTED
+    assert second_evaluation.decision == AdmissionDecision.ACCEPTED
+    assert first_reserve.decision == AdmissionDecision.ACCEPTED
+    assert second_delayed.decision == AdmissionDecision.DELAYED
+    assert journal.allocation_status("cluster", 101)["state"] == "delayed"
+
+    released = await service.handle(
+        ReleaseRequest(1005, "cluster", 100, 0), 1001
+    )
+    reevaluated = await service.handle(
+        single_service_request(101, 1006, evaluate=True), 1001
+    )
+    second_reserve = await service.handle(
+        single_service_request(101, 1007), 1001
+    )
+
+    assert isinstance(released, ReleaseResponse)
+    assert reevaluated.decision == AdmissionDecision.ACCEPTED
+    assert second_reserve.decision == AdmissionDecision.ACCEPTED
+    assert adapter.held_by == 101
+    journal.close()
 
 
 def test_evaluate_is_nonbinding_and_terminal_results_replay(tmp_path) -> None:

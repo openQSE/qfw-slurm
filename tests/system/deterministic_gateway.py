@@ -21,6 +21,7 @@ from qfw_slurm_gateway.protocol import (
 from qfw_slurm_gateway.server import GatewayServer
 from qfw_slurm_gateway.service import GatewayService
 from qfw_slurm_gateway.slurm_verifier import (
+    SlurmVerifier,
     SlurmVerificationError,
     VerifiedJob,
 )
@@ -78,12 +79,13 @@ class DeterministicAdapter:
         self.mode = mode
         self.timeout_seconds = timeout_seconds
         self._reservation_ids: dict[str, int] = {}
+        self._held_by: int | None = None
 
     def resolve(self, service_id: str) -> QPMBinding:
         return QPMBinding(service_id, f"test-runtime-{service_id}", 1, self)
 
     def reserve(self, binding, request, job) -> ServiceResult:
-        del request, job
+        del request
         if self.mode in {"qpm-failure", "malformed-qpm"}:
             detail = (
                 "configured QPM operation failure"
@@ -98,10 +100,19 @@ class DeterministicAdapter:
             "delayed": AdmissionDecision.DELAYED,
             "rejected": AdmissionDecision.REJECTED,
         }.get(self.mode, AdmissionDecision.ACCEPTED)
+        if self.mode == "capacity-one":
+            decision = (
+                AdmissionDecision.DELAYED
+                if self._held_by not in {None, job.canonical_job_id}
+                else AdmissionDecision.ACCEPTED
+            )
+            if decision == AdmissionDecision.ACCEPTED:
+                self._held_by = job.canonical_job_id
         reservation_id = None
         if decision == AdmissionDecision.ACCEPTED:
+            key = f"{job.canonical_job_id}:{binding.service_id}"
             reservation_id = self._reservation_ids.setdefault(
-                binding.service_id, 40 + len(self._reservation_ids) + 1
+                key, 40 + len(self._reservation_ids) + 1
             )
         return ServiceResult(
             binding.service_id,
@@ -150,6 +161,8 @@ class DeterministicAdapter:
         del binding, reservation_id, reason
         if self.mode == "release-unresolved":
             raise QFwAdapterError("configured unresolved release")
+        if self.mode == "capacity-one":
+            self._held_by = None
         return {"status": "released"}
 
 
@@ -158,7 +171,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--journal", required=True, type=Path)
     parser.add_argument("--ready-file", required=True, type=Path)
     parser.add_argument("--cluster", required=True)
-    parser.add_argument("--job-id", required=True, type=int)
+    parser.add_argument("--job-id", type=int, default=0)
     parser.add_argument("--uid", required=True, type=int)
     parser.add_argument("--gid", required=True, type=int)
     parser.add_argument("--port", type=int, default=0)
@@ -173,9 +186,11 @@ def _parser() -> argparse.ArgumentParser:
             "malformed-qpm",
             "timeout",
             "release-unresolved",
+            "capacity-one",
         ),
         default="accepted",
     )
+    parser.add_argument("--live-slurm", action="store_true")
     return parser
 
 
@@ -183,7 +198,7 @@ async def _serve(args) -> None:
     config = GatewayConfig(
         listen_host="127.0.0.1",
         listen_port=args.port,
-        accepted_uids=frozenset({os.getuid()}),
+        accepted_uids=frozenset({os.getuid(), 990}),
         cluster_name=args.cluster,
         journal_path=args.journal,
         qfw_activation=Path("/test-only/qfw-activate"),
@@ -193,10 +208,15 @@ async def _serve(args) -> None:
         connect_timeout_seconds=args.timeout_seconds,
     )
     journal = Journal(config.journal_path)
+    verifier = (
+        SlurmVerifier(args.cluster, trusted_sender_uids=frozenset({0, 990}))
+        if args.live_slurm
+        else DeterministicVerifier(
+            args.cluster, args.job_id, args.uid, args.gid
+        )
+    )
     service = GatewayService(
-        journal,
-        DeterministicVerifier(args.cluster, args.job_id, args.uid, args.gid),
-        DeterministicAdapter(args.mode, args.timeout_seconds),
+        journal, verifier, DeterministicAdapter(args.mode, args.timeout_seconds)
     )
     server = GatewayServer(config, service)
     stopped = asyncio.Event()
@@ -226,7 +246,7 @@ async def _serve(args) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    if args.job_id <= 0 or args.uid < 0 or args.gid < 0:
+    if (not args.live_slurm and args.job_id <= 0) or args.uid < 0 or args.gid < 0:
         raise SystemExit("test allocation identity is invalid")
     if args.timeout_seconds <= 0:
         raise SystemExit("test timeout must be positive")
