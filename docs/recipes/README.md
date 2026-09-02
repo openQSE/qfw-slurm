@@ -4,6 +4,15 @@ These recipes validate progressively larger qfw-slurm boundaries. Start with
 the native suite, then exercise the gateway, and use the live recipes only on
 a configured Slurm cluster.
 
+## Installation
+
+| Goal | Recipe |
+| --- | --- |
+| Install a development or user-owned build | [Non-standard installation](install-nonstandard-location.md) |
+| Install an immutable site release | [Standard site installation](install-standard-location.md) |
+
+## Testing
+
 | Goal | Recipe |
 | --- | --- |
 | Build and run the native and Python tests | [Native and gateway test suite](test-native-suite.md) |
@@ -16,6 +25,7 @@ are maintained in the installed manual pages:
 
 ```bash
 man 1 qfw-slurm-driver
+man 1 qfw_slurm_install.sh
 man 8 qfw-slurm-gateway
 man 8 qfw-slurm-gateway-launch
 man 8 qfw-slurm-epilog

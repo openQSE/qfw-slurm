@@ -1,0 +1,72 @@
+.TH QFW_SLURM_INSTALL.SH 1 "September 2026" "qfw-slurm 0.1.0" "User Commands"
+.SH NAME
+qfw_slurm_install.sh \- build and install qfw-slurm
+.SH SYNOPSIS
+.B ./setup/qfw_slurm_install.sh
+.BI --prefix " prefix"
+.BI --python " python"
+.RI [ --source-dir " directory" ]
+.RI [ options ]
+.SH DESCRIPTION
+.B qfw_slurm_install.sh
+is the source-tree convenience installer. It delegates native configuration,
+compilation, and installation to CMake. It then installs the Python gateway
+package into the explicitly selected Python environment.
+.PP
+The installer does not build QFw, edit Slurm configuration, install protected
+site configuration, create service accounts, or start the gateway.
+.SH OPTIONS
+.TP
+.BI --prefix " prefix"
+Set the native CMake installation prefix. This option is required.
+.TP
+.BI --python " python"
+Select the Python interpreter that receives the gateway package. The
+interpreter should belong to the matching QFw virtual environment. This option
+is required unless
+.B --skip-gateway
+is used.
+.TP
+.BI --source-dir " directory"
+Use an explicit qfw-slurm source tree. The default is the parent of the source
+installer. This option is required when invoking the installed reference copy.
+.TP
+.BI --build-dir " directory"
+Set the CMake build directory. The default is
+.I build
+under the source tree.
+.TP
+.B --without-plugin
+Configure with
+.BR QFW_SLURM_BUILD_PLUGIN=OFF .
+This permits a driver and native-library build without Slurm headers. It omits
+both the SPANK module and controller epilog.
+.TP
+.B --skip-gateway
+Skip Python gateway installation and make
+.B --python
+optional.
+.TP
+.BR -h , " --help"
+Print the command summary.
+.SH PYTHON REQUIREMENTS
+Install
+.I setup/build-requirements.txt
+and
+.I setup/requirements.txt
+into the selected environment before invoking the installer. Gateway
+installation uses pip with build isolation and dependency resolution disabled,
+so it does not contact a package index or modify unrelated dependencies.
+.SH EXIT STATUS
+Zero indicates that every selected installation step completed. Argument,
+CMake, compiler, install, or pip failures return nonzero.
+.SH FILES
+.TP
+.I setup/qfw_slurm_install.sh
+Source-tree installer.
+.TP
+.I libexec/qfw-slurm/qfw_slurm_install.sh
+Installed reference copy below the selected prefix.
+.SH SEE ALSO
+.BR qfw-slurm-driver (1),
+.BR qfw-slurm (7)

@@ -108,6 +108,8 @@ install(FILES
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/config)
 install(FILES systemd/qfw-slurm-gateway.service
 	DESTINATION ${QFW_SLURM_SYSTEMD_DIR})
+install(PROGRAMS setup/qfw_slurm_install.sh
+	DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/qfw-slurm)
 
 if(QFW_SLURM_BUILD_TESTS)
 	add_executable(test_qsgp_protocol tests/protocol/test_qsgp_protocol.c)
@@ -170,5 +172,16 @@ if(QFW_SLURM_BUILD_TESTS)
 			set_tests_properties(driver_gateway_system PROPERTIES
 				SKIP_RETURN_CODE 77 TIMEOUT 60)
 		endif()
+	endif()
+	if(QFW_SLURM_BUILD_PLUGIN)
+		add_test(NAME qfw_slurm_install_tree_smoke
+			COMMAND "${CMAKE_COMMAND}"
+				-DQFW_SLURM_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
+				-DQFW_SLURM_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/test-install
+				-DQFW_SLURM_INSTALL_MANDIR=${CMAKE_INSTALL_MANDIR}
+				-DQFW_SLURM_INSTALL_LIBEXECDIR=${CMAKE_INSTALL_LIBEXECDIR}
+				-DQFW_SLURM_PLUGIN_DIR=${QFW_SLURM_PLUGIN_DIR}
+				-DQFW_SLURM_SYSTEMD_DIR=${QFW_SLURM_SYSTEMD_DIR}
+				-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunQfwSlurmInstallTreeSmoke.cmake")
 	endif()
 endif()

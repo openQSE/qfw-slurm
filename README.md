@@ -25,6 +25,7 @@ Manual pages are the authoritative usage reference:
 ```bash
 man 7 qfw-slurm
 man 1 qfw-slurm-driver
+man 1 qfw_slurm_install.sh
 man 8 qfw-slurm-gateway
 man 8 qfw-slurm-gateway-launch
 man 8 qfw-slurm-epilog
@@ -32,9 +33,9 @@ man 5 qfw-slurm-plugin.conf
 man 5 qfw-slurm-gateway.yaml
 ```
 
-The [test recipe index](docs/recipes/README.md) provides complete procedures
-for native tests, deterministic gateway testing, live DEFw/QPM testing, and
-SPANK integration testing.
+The [recipe index](docs/recipes/README.md) provides standard and non-standard
+installation procedures plus complete native, gateway, QPM, and SPANK test
+workflows.
 
 ## Build and install
 
@@ -42,23 +43,22 @@ The full native build requires a C11 compiler, CMake 3.20 or newer, Slurm
 development files, libmunge, and MUNGE development headers. Gateway tests also
 require Python 3.10 or newer, PyYAML, and pytest.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
-sudo cmake --install build --prefix /usr
-```
-
-Install the Python gateway in the QFw virtual environment selected by the
-site:
+Install build requirements into the QFw virtual environment selected by the
+site, then use the source-tree installer:
 
 ```bash
-source /opt/openqse/qfw/bin/qfw-activate \
-  --venv /opt/openqse/qfw-venv
-python -m pip install .
-qfw-deactivate
+python -m pip install \
+  -r setup/build-requirements.txt \
+  -r setup/requirements.txt
+
+./setup/qfw_slurm_install.sh \
+  --build-dir build \
+  --prefix /usr \
+  --python "$(command -v python)"
 ```
 
-Installed examples for the protected site files are under
-`share/qfw-slurm/config`. The packaged systemd unit is
+The installer delegates native installation to CMake and installs the gateway
+into only the selected Python environment. See the recipe index for versioned
+site prefixes and verification procedures. Installed examples for protected
+site files are under `share/qfw-slurm/config`; the packaged service unit is
 `qfw-slurm-gateway.service`.
