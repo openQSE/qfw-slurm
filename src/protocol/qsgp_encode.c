@@ -324,8 +324,8 @@ static int validate_service_set(const struct qsgp_reserve_request *request)
 	return QSGP_OK;
 }
 
-static int validate_reserve_response(
-	const struct qsgp_reserve_response *response)
+static int validate_admission_response(
+	const struct qsgp_reserve_response *response, bool reserve)
 {
 	bool found_delayed = false;
 	bool found_rejected = false;
@@ -341,8 +341,9 @@ static int validate_reserve_response(
 		if (length == 0 || length > QSGP_MAX_SERVICE_ID ||
 		    result->decision < QSGP_ADMISSION_ACCEPTED ||
 		    result->decision > QSGP_ADMISSION_REJECTED ||
-		    (result->decision == QSGP_ADMISSION_ACCEPTED &&
+		    (reserve && result->decision == QSGP_ADMISSION_ACCEPTED &&
 		     (!result->has_reservation_id || result->reservation_id == 0)) ||
+		    (!reserve && result->has_reservation_id) ||
 		    (result->decision != QSGP_ADMISSION_ACCEPTED &&
 		     result->has_reservation_id))
 			return QSGP_ERR_INVALID;
@@ -365,7 +366,8 @@ static int validate_reserve_response(
 	return QSGP_OK;
 }
 
-int qsgp_encode_reserve_request(const struct qsgp_reserve_request *request,
+static int encode_admission_request(
+	const struct qsgp_reserve_request *request, uint16_t message_type,
 	uint64_t correlation_id, struct qsgp_frame *frame)
 {
 	struct qsgp_builder builder;
@@ -444,15 +446,32 @@ int qsgp_encode_reserve_request(const struct qsgp_reserve_request *request,
 	for (index = 0; index < request->service_count; index++)
 		ADD_FIELD(add_service_request(&builder,
 			request->service_ids[index]));
-	status = qsgp_builder_finish(&builder, QSGP_RESERVE_REQUEST,
+	status = qsgp_builder_finish(&builder, message_type,
 		correlation_id, frame);
 out:
 	qsgp_builder_destroy(&builder);
 	return status;
 }
 
-int qsgp_encode_reserve_response(const struct qsgp_reserve_response *response,
+int qsgp_encode_reserve_request(const struct qsgp_reserve_request *request,
 	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	return encode_admission_request(request, QSGP_RESERVE_REQUEST,
+		correlation_id, frame);
+}
+
+int qsgp_encode_evaluate_request(const struct qsgp_reserve_request *request,
+	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	if (request == NULL || !request->has_workload)
+		return QSGP_ERR_INVALID;
+	return encode_admission_request(request, QSGP_EVALUATE_REQUEST,
+		correlation_id, frame);
+}
+
+static int encode_admission_response(
+	const struct qsgp_reserve_response *response, uint16_t message_type,
+	bool reserve, uint64_t correlation_id, struct qsgp_frame *frame)
 {
 	struct qsgp_builder builder;
 	size_t index;
@@ -464,7 +483,7 @@ int qsgp_encode_reserve_response(const struct qsgp_reserve_response *response,
 	    response->result_count == 0 ||
 	    response->result_count > QSGP_MAX_SERVICES)
 		return QSGP_ERR_INVALID;
-	status = validate_reserve_response(response);
+	status = validate_admission_response(response, reserve);
 	if (status != QSGP_OK)
 		return status;
 	memset(frame, 0, sizeof(*frame));
@@ -477,11 +496,26 @@ int qsgp_encode_reserve_response(const struct qsgp_reserve_response *response,
 		QSGP_TLV_ADMISSION_DECISION, response->decision));
 	for (index = 0; index < response->result_count; index++)
 		ADD_FIELD(add_service_result(&builder, &response->results[index]));
-	status = qsgp_builder_finish(&builder, QSGP_RESERVE_RESPONSE,
+	status = qsgp_builder_finish(&builder, message_type,
 		correlation_id, frame);
 out:
 	qsgp_builder_destroy(&builder);
 	return status;
+}
+
+int qsgp_encode_reserve_response(const struct qsgp_reserve_response *response,
+	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	return encode_admission_response(response, QSGP_RESERVE_RESPONSE, true,
+		correlation_id, frame);
+}
+
+int qsgp_encode_evaluate_response(
+	const struct qsgp_reserve_response *response,
+	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	return encode_admission_response(response, QSGP_EVALUATE_RESPONSE, false,
+		correlation_id, frame);
 }
 
 int qsgp_encode_release_request(const struct qsgp_release_request *request,

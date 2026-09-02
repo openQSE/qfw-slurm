@@ -31,8 +31,10 @@ class ProtocolError(ValueError):
 class MessageType(enum.IntEnum):
     RESERVE_REQUEST = 0x0001
     RELEASE_REQUEST = 0x0002
+    EVALUATE_REQUEST = 0x0003
     RESERVE_RESPONSE = 0x8001
     RELEASE_RESPONSE = 0x8002
+    EVALUATE_RESPONSE = 0x8003
     ERROR_RESPONSE = 0x8FFF
 
 
@@ -139,6 +141,11 @@ class ReserveRequest:
 
 
 @dataclasses.dataclass(frozen=True)
+class EvaluateRequest(ReserveRequest):
+    """Non-binding admission request using the reserve workload envelope."""
+
+
+@dataclasses.dataclass(frozen=True)
 class ServiceResult:
     service_id: str
     decision: AdmissionDecision
@@ -157,6 +164,11 @@ class ReserveResponse:
     request_id: int
     decision: AdmissionDecision
     results: tuple[ServiceResult, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class EvaluateResponse(ReserveResponse):
+    """Admission estimate whose results never contain reservation IDs."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -345,7 +357,9 @@ def _decode_text(value: bytes | None, maximum: int, label: str) -> str:
         raise ProtocolError(f"{label} is not UTF-8") from error
 
 
-def encode_reserve_request(request: ReserveRequest, correlation_id: int) -> bytes:
+def _encode_admission_request(
+    request: ReserveRequest, correlation_id: int, message_type: MessageType
+) -> bytes:
     _validate_reserve_request(request)
     workload = request.workload
     payload = b"".join(
@@ -393,7 +407,21 @@ def encode_reserve_request(request: ReserveRequest, correlation_id: int) -> byte
     for service_id in request.service_ids:
         nested = _text(Field.SERVICE_ID, service_id, MAX_SERVICE_ID)
         payload += _tlv(Field.SERVICE_REQUEST, nested)
-    return _frame(MessageType.RESERVE_REQUEST, correlation_id, payload)
+    return _frame(message_type, correlation_id, payload)
+
+
+def encode_reserve_request(request: ReserveRequest, correlation_id: int) -> bytes:
+    return _encode_admission_request(
+        request, correlation_id, MessageType.RESERVE_REQUEST
+    )
+
+
+def encode_evaluate_request(request: EvaluateRequest, correlation_id: int) -> bytes:
+    if request.workload is None:
+        raise ProtocolError("evaluate request requires a workload envelope")
+    return _encode_admission_request(
+        request, correlation_id, MessageType.EVALUATE_REQUEST
+    )
 
 
 def _decode_service_request(payload: bytes) -> str:
@@ -403,10 +431,14 @@ def _decode_service_request(payload: bytes) -> str:
     return _decode_text(values[Field.SERVICE_ID], MAX_SERVICE_ID, "service_id")
 
 
-def decode_reserve_request(frame: bytes) -> tuple[Header, ReserveRequest]:
+def _decode_admission_request(
+    frame: bytes,
+    message_type: MessageType,
+    request_type: type[ReserveRequest],
+) -> tuple[Header, ReserveRequest]:
     header = decode_header(frame)
-    if header.message_type != MessageType.RESERVE_REQUEST:
-        raise ProtocolError("expected reserve request")
+    if header.message_type != message_type:
+        raise ProtocolError("unexpected admission request type")
     values, repeated = _collect(
         frame[HEADER_SIZE:], {Field.SERVICE_REQUEST}
     )
@@ -457,7 +489,7 @@ def decode_reserve_request(frame: bytes) -> tuple[Header, ReserveRequest]:
     ):
         raise ProtocolError("optional workload fields lack an envelope")
     workload = _decode_workload(values) if present else None
-    request = ReserveRequest(
+    request = request_type(
         request_id=_decode_u64(_one(values, Field.REQUEST_ID), "request_id"),
         cluster_name=_decode_text(
             _one(values, Field.CLUSTER_NAME), MAX_CLUSTER_NAME, "cluster_name"
@@ -479,6 +511,24 @@ def decode_reserve_request(frame: bytes) -> tuple[Header, ReserveRequest]:
         else None,
     )
     _validate_reserve_request(request)
+    return header, request
+
+
+def decode_reserve_request(frame: bytes) -> tuple[Header, ReserveRequest]:
+    header, request = _decode_admission_request(
+        frame, MessageType.RESERVE_REQUEST, ReserveRequest
+    )
+    return header, request
+
+
+def decode_evaluate_request(frame: bytes) -> tuple[Header, EvaluateRequest]:
+    header, request = _decode_admission_request(
+        frame, MessageType.EVALUATE_REQUEST, EvaluateRequest
+    )
+    if not isinstance(request, EvaluateRequest):
+        raise ProtocolError("decoded evaluate request has the wrong type")
+    if request.workload is None:
+        raise ProtocolError("evaluate request requires a workload envelope")
     return header, request
 
 
@@ -547,7 +597,7 @@ def _decode_workload(values: dict[Field, bytes]) -> Workload:
     )
 
 
-def _encode_service_result(result: ServiceResult) -> bytes:
+def _encode_service_result(result: ServiceResult, reserve: bool) -> bytes:
     nested = b"".join(
         (
             _text(Field.SERVICE_ID, result.service_id, MAX_SERVICE_ID),
@@ -576,22 +626,45 @@ def _encode_service_result(result: ServiceResult) -> bytes:
             else b"",
         )
     )
-    if result.decision == AdmissionDecision.ACCEPTED:
+    if reserve and result.decision == AdmissionDecision.ACCEPTED:
         _uint(result.reservation_id, 64, "reservation_id", nonzero=True)
     elif result.reservation_id is not None:
-        raise ProtocolError("non-accepted result contains reservation_id")
+        raise ProtocolError("result must not contain reservation_id")
     return _tlv(Field.SERVICE_RESULT, nested)
 
 
-def encode_reserve_response(response: ReserveResponse, correlation_id: int) -> bytes:
-    _validate_reserve_response(response)
+def _encode_admission_response(
+    response: ReserveResponse,
+    correlation_id: int,
+    message_type: MessageType,
+    reserve: bool,
+) -> bytes:
+    _validate_admission_response(response, reserve)
     payload = _u64(Field.REQUEST_ID, response.request_id)
     payload += _u32(Field.ADMISSION_DECISION, response.decision)
-    payload += b"".join(_encode_service_result(item) for item in response.results)
-    return _frame(MessageType.RESERVE_RESPONSE, correlation_id, payload)
+    payload += b"".join(
+        _encode_service_result(item, reserve) for item in response.results
+    )
+    return _frame(message_type, correlation_id, payload)
 
 
-def _validate_reserve_response(response: ReserveResponse) -> None:
+def encode_reserve_response(response: ReserveResponse, correlation_id: int) -> bytes:
+    return _encode_admission_response(
+        response, correlation_id, MessageType.RESERVE_RESPONSE, True
+    )
+
+
+def encode_evaluate_response(
+    response: EvaluateResponse, correlation_id: int
+) -> bytes:
+    return _encode_admission_response(
+        response, correlation_id, MessageType.EVALUATE_RESPONSE, False
+    )
+
+
+def _validate_admission_response(
+    response: ReserveResponse, reserve: bool
+) -> None:
     _uint(response.request_id, 64, "request_id", nonzero=True)
     if not 0 < len(response.results) <= MAX_SERVICES:
         raise ProtocolError("reserve response result count is invalid")
@@ -607,6 +680,8 @@ def _validate_reserve_response(response: ReserveResponse) -> None:
         _uint(item.reason_code, 64, "reason_code")
         if item.reservation_id is not None:
             _uint(item.reservation_id, 64, "reservation_id", nonzero=True)
+        if not reserve and item.reservation_id is not None:
+            raise ProtocolError("evaluate result contains reservation_id")
         if item.qpm_generation is not None:
             _uint(item.qpm_generation, 64, "qpm_generation")
         if item.qpm_runtime_id is not None:
@@ -730,8 +805,12 @@ def encode_error_response(response: ErrorResponse, correlation_id: int) -> bytes
     return _frame(MessageType.ERROR_RESPONSE, correlation_id, payload)
 
 
-def decode_request(frame: bytes) -> tuple[Header, ReserveRequest | ReleaseRequest]:
+def decode_request(
+    frame: bytes,
+) -> tuple[Header, EvaluateRequest | ReserveRequest | ReleaseRequest]:
     header = decode_header(frame)
+    if header.message_type == MessageType.EVALUATE_REQUEST:
+        return decode_evaluate_request(frame)
     if header.message_type == MessageType.RESERVE_REQUEST:
         return decode_reserve_request(frame)
     if header.message_type == MessageType.RELEASE_REQUEST:
@@ -740,9 +819,11 @@ def decode_request(frame: bytes) -> tuple[Header, ReserveRequest | ReleaseReques
 
 
 def encode_response(
-    response: ReserveResponse | ReleaseResponse | ErrorResponse,
+    response: EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse,
     correlation_id: int,
 ) -> bytes:
+    if isinstance(response, EvaluateResponse):
+        return encode_evaluate_response(response, correlation_id)
     if isinstance(response, ReserveResponse):
         return encode_reserve_response(response, correlation_id)
     if isinstance(response, ReleaseResponse):
@@ -753,7 +834,7 @@ def encode_response(
 
 
 def response_to_dict(
-    response: ReserveResponse | ReleaseResponse | ErrorResponse,
+    response: EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse,
 ) -> dict:
     value = dataclasses.asdict(response)
     value["response_type"] = type(response).__name__
@@ -772,10 +853,15 @@ def _enum_values(value):
 
 def response_from_dict(
     value: dict,
-) -> ReserveResponse | ReleaseResponse | ErrorResponse:
+) -> EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse:
     response_type = value.get("response_type")
-    if response_type == "ReserveResponse":
-        return ReserveResponse(
+    if response_type in {"EvaluateResponse", "ReserveResponse"}:
+        response_class = (
+            EvaluateResponse
+            if response_type == "EvaluateResponse"
+            else ReserveResponse
+        )
+        return response_class(
             request_id=value["request_id"],
             decision=AdmissionDecision(value["decision"]),
             results=tuple(

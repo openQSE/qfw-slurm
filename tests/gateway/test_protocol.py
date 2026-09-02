@@ -10,6 +10,8 @@ from qfw_slurm_gateway.protocol import (
     HEADER_SIZE,
     AdmissionDecision,
     ErrorResponse,
+    EvaluateRequest,
+    EvaluateResponse,
     Field,
     GatewayError,
     ProtocolError,
@@ -21,6 +23,8 @@ from qfw_slurm_gateway.protocol import (
     WorkloadKind,
     bounded_diagnostic,
     decode_request,
+    encode_evaluate_request,
+    encode_evaluate_response,
     encode_error_response,
     encode_release_request,
     encode_reserve_request,
@@ -57,6 +61,28 @@ def test_reserve_request_round_trip() -> None:
     header, decoded = decode_request(encode_reserve_request(request, 99))
     assert header.correlation_id == 99
     assert decoded == request
+
+
+def test_evaluate_request_round_trip() -> None:
+    request = EvaluateRequest(**reserve_request().__dict__)
+    header, decoded = decode_request(encode_evaluate_request(request, 98))
+    assert header.correlation_id == 98
+    assert decoded == request
+    assert isinstance(decoded, EvaluateRequest)
+
+
+def test_evaluate_requires_workload() -> None:
+    request = EvaluateRequest(
+        request_id=1,
+        cluster_name="test-cluster",
+        canonical_job_id=42,
+        job_uid=1001,
+        job_gid=1001,
+        workload=None,
+        service_ids=("nwqsim-site",),
+    )
+    with pytest.raises(ProtocolError, match="requires a workload"):
+        decode_request(encode_evaluate_request(request, 98))
 
 
 def test_release_request_round_trip() -> None:
@@ -107,6 +133,33 @@ def test_inconsistent_response_is_rejected() -> None:
     )
     with pytest.raises(ProtocolError, match="non-accepted"):
         encode_reserve_response(response, 1)
+
+
+def test_evaluate_response_rejects_reservation_id() -> None:
+    response = EvaluateResponse(
+        1,
+        AdmissionDecision.ACCEPTED,
+        (
+            ServiceResult(
+                "svc",
+                AdmissionDecision.ACCEPTED,
+                0,
+                reservation_id=41,
+            ),
+        ),
+    )
+    with pytest.raises(ProtocolError, match="reservation_id"):
+        encode_evaluate_response(response, 1)
+
+
+def test_evaluate_response_accepts_without_reservation_id() -> None:
+    response = EvaluateResponse(
+        1,
+        AdmissionDecision.ACCEPTED,
+        (ServiceResult("svc", AdmissionDecision.ACCEPTED, 0),),
+    )
+    frame = encode_evaluate_response(response, 1)
+    assert struct.unpack_from("!H", frame, 8)[0] == 0x8003
 
 
 def test_error_response_is_bounded() -> None:

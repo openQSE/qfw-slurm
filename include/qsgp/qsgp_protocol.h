@@ -17,6 +17,17 @@ int qsgp_encode_reserve_response(const struct qsgp_reserve_response *response,
 int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
 	struct qsgp_header *header, struct qsgp_reserve_response *response);
 
+int qsgp_encode_evaluate_request(const struct qsgp_reserve_request *request,
+	uint64_t correlation_id, struct qsgp_frame *frame);
+int qsgp_decode_evaluate_request(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_request *request);
+
+int qsgp_encode_evaluate_response(
+	const struct qsgp_reserve_response *response,
+	uint64_t correlation_id, struct qsgp_frame *frame);
+int qsgp_decode_evaluate_response(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_response *response);
+
 int qsgp_encode_release_request(const struct qsgp_release_request *request,
 	uint64_t correlation_id, struct qsgp_frame *frame);
 int qsgp_decode_release_request(const uint8_t *data, size_t size,

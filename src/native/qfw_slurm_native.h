@@ -159,6 +159,10 @@ int qfw_gateway_reserve(const struct qfw_gateway_client *client,
 	const struct qsgp_reserve_request *request,
 	struct qsgp_reserve_response *response,
 	struct qfw_gateway_call_error *error);
+int qfw_gateway_evaluate(const struct qfw_gateway_client *client,
+	const struct qsgp_reserve_request *request,
+	struct qsgp_reserve_response *response,
+	struct qfw_gateway_call_error *error);
 int qfw_gateway_release(const struct qfw_gateway_client *client,
 	const struct qsgp_release_request *request,
 	struct qsgp_release_response *response,

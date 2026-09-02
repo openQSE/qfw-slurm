@@ -192,7 +192,7 @@ static int decode_service_request(const struct qsgp_tlv *container,
 }
 
 static int decode_service_result(const struct qsgp_tlv *container,
-	struct qsgp_service_result *result)
+	struct qsgp_service_result *result, bool reserve)
 {
 	struct qsgp_cursor cursor = {
 		.data = container->value,
@@ -266,7 +266,7 @@ static int decode_service_result(const struct qsgp_tlv *container,
 	    result->decision < QSGP_ADMISSION_ACCEPTED ||
 	    result->decision > QSGP_ADMISSION_REJECTED)
 		return QSGP_ERR_INVALID;
-	if (result->decision == QSGP_ADMISSION_ACCEPTED)
+	if (reserve && result->decision == QSGP_ADMISSION_ACCEPTED)
 		return result->has_reservation_id && result->reservation_id != 0 ?
 			QSGP_OK : QSGP_ERR_INVALID;
 	return result->has_reservation_id ? QSGP_ERR_INVALID : QSGP_OK;
@@ -328,8 +328,9 @@ static int decode_release_result(const struct qsgp_tlv *container,
 	return QSGP_OK;
 }
 
-int qsgp_decode_reserve_request(const uint8_t *data, size_t size,
-	struct qsgp_header *header, struct qsgp_reserve_request *request)
+static int decode_admission_request(const uint8_t *data, size_t size,
+	uint16_t message_type, struct qsgp_header *header,
+	struct qsgp_reserve_request *request)
 {
 	struct qsgp_cursor cursor;
 	struct qsgp_tlv tlv;
@@ -342,7 +343,7 @@ int qsgp_decode_reserve_request(const uint8_t *data, size_t size,
 	if (request == NULL)
 		return QSGP_ERR_INVALID;
 	memset(request, 0, sizeof(*request));
-	status = decode_start(data, size, QSGP_RESERVE_REQUEST, header, &cursor);
+	status = decode_start(data, size, message_type, header, &cursor);
 	if (status != QSGP_OK)
 		return status;
 	while ((status = qsgp_cursor_next(&cursor, &tlv)) > 0) {
@@ -480,8 +481,27 @@ int qsgp_decode_reserve_request(const uint8_t *data, size_t size,
 #undef REQUIRED
 }
 
-int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
-	struct qsgp_header *header, struct qsgp_reserve_response *response)
+int qsgp_decode_reserve_request(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_request *request)
+{
+	return decode_admission_request(data, size, QSGP_RESERVE_REQUEST,
+		header, request);
+}
+
+int qsgp_decode_evaluate_request(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_request *request)
+{
+	int status = decode_admission_request(data, size,
+		QSGP_EVALUATE_REQUEST, header, request);
+
+	if (status != QSGP_OK)
+		return status;
+	return request->has_workload ? QSGP_OK : QSGP_ERR_INVALID;
+}
+
+static int decode_admission_response(const uint8_t *data, size_t size,
+	uint16_t message_type, bool reserve, struct qsgp_header *header,
+	struct qsgp_reserve_response *response)
 {
 	struct qsgp_cursor cursor;
 	struct qsgp_tlv tlv;
@@ -494,7 +514,7 @@ int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
 	if (response == NULL)
 		return QSGP_ERR_INVALID;
 	memset(response, 0, sizeof(*response));
-	status = decode_start(data, size, QSGP_RESERVE_RESPONSE, header, &cursor);
+	status = decode_start(data, size, message_type, header, &cursor);
 	if (status != QSGP_OK)
 		return status;
 	while ((status = qsgp_cursor_next(&cursor, &tlv)) > 0) {
@@ -504,7 +524,7 @@ int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
 			if (response->result_count >= QSGP_MAX_SERVICES)
 				return QSGP_ERR_BOUNDS;
 			status = decode_service_result(&tlv,
-				&response->results[response->result_count]);
+				&response->results[response->result_count], reserve);
 			if (status != QSGP_OK)
 				return status;
 			response->result_count++;
@@ -552,6 +572,20 @@ int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
 	    (found_rejected || !found_delayed))
 		return QSGP_ERR_INVALID;
 	return QSGP_OK;
+}
+
+int qsgp_decode_reserve_response(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_response *response)
+{
+	return decode_admission_response(data, size, QSGP_RESERVE_RESPONSE,
+		true, header, response);
+}
+
+int qsgp_decode_evaluate_response(const uint8_t *data, size_t size,
+	struct qsgp_header *header, struct qsgp_reserve_response *response)
+{
+	return decode_admission_response(data, size, QSGP_EVALUATE_RESPONSE,
+		false, header, response);
 }
 
 int qsgp_decode_release_request(const uint8_t *data, size_t size,

@@ -116,6 +116,62 @@ static int test_duplicate_service_request(void)
 		QSGP_ERR_CONFLICT);
 	return 0;
 }
+
+static int test_evaluate_messages(void)
+{
+	struct qsgp_reserve_request request = {
+		.request_id = 81,
+		.cluster_name = "cluster-a",
+		.canonical_job_id = 42,
+		.job_uid = 1000,
+		.job_gid = 1000,
+		.has_workload = true,
+		.workload = {
+			.kind = QSGP_WORKLOAD_QUANTUM,
+			.walltime_ns = 1000000,
+			.circuit_count = 1,
+			.max_qubits = 2,
+			.max_depth = 3,
+			.max_shots = 4,
+		},
+		.service_count = 1,
+		.service_ids = {"nwqsim-site"},
+	};
+	struct qsgp_reserve_request decoded_request;
+	struct qsgp_reserve_response response = {
+		.request_id = 81,
+		.decision = QSGP_ADMISSION_ACCEPTED,
+		.result_count = 1,
+		.results = {{
+			.service_id = "nwqsim-site",
+			.decision = QSGP_ADMISSION_ACCEPTED,
+		}},
+	};
+	struct qsgp_reserve_response decoded_response;
+	struct qsgp_header header;
+	struct qsgp_frame frame;
+
+	CHECK(qsgp_encode_evaluate_request(&request, 82, &frame) == QSGP_OK);
+	CHECK(qsgp_decode_evaluate_request(frame.data, frame.size, &header,
+		&decoded_request) == QSGP_OK);
+	CHECK(header.message_type == QSGP_EVALUATE_REQUEST);
+	CHECK(decoded_request.request_id == request.request_id);
+	qsgp_frame_destroy(&frame);
+
+	CHECK(qsgp_encode_evaluate_response(&response, 83, &frame) == QSGP_OK);
+	CHECK(qsgp_decode_evaluate_response(frame.data, frame.size, &header,
+		&decoded_response) == QSGP_OK);
+	CHECK(header.message_type == QSGP_EVALUATE_RESPONSE);
+	CHECK(!decoded_response.results[0].has_reservation_id);
+	qsgp_frame_destroy(&frame);
+
+	response.results[0].reservation_id = 9;
+	response.results[0].has_reservation_id = true;
+	CHECK(qsgp_encode_evaluate_response(&response, 84, &frame) ==
+		QSGP_ERR_INVALID);
+	return 0;
+}
+
 static int test_reserve_response(void)
 {
 	struct qsgp_reserve_response input = {
@@ -304,6 +360,7 @@ int main(void)
 	CHECK(test_reserve_request() == 0);
 	CHECK(test_reserve_retrieval_request() == 0);
 	CHECK(test_duplicate_service_request() == 0);
+	CHECK(test_evaluate_messages() == 0);
 	CHECK(test_reserve_response() == 0);
 	CHECK(test_nonaccepted_response() == 0);
 	CHECK(test_release_messages() == 0);

@@ -21,6 +21,7 @@
 
 enum server_mode {
 	SERVER_ACCEPT,
+	SERVER_EVALUATE_ACCEPT,
 	SERVER_REMOTE_ERROR,
 	SERVER_WRONG_CORRELATION,
 	SERVER_WRONG_TYPE,
@@ -92,6 +93,12 @@ static int response_frame(enum server_mode mode,
 			},
 		};
 
+		if (mode == SERVER_EVALUATE_ACCEPT) {
+			response.results[0].reservation_id = 0;
+			response.results[0].has_reservation_id = false;
+			return qsgp_encode_evaluate_response(&response,
+				correlation, frame);
+		}
 		return qsgp_encode_reserve_response(&response, correlation, frame);
 	}
 }
@@ -120,9 +127,17 @@ static int server_run(int listener, enum server_mode mode)
 		&credential_size, QSGP_MAX_CREDENTIAL_SIZE, &deadline) != QSGP_OK ||
 	    qsgp_munge_decode(credential, credential_size, &request_frame,
 		&request_frame_size, &identity) != QSGP_OK ||
-	    qsgp_decode_reserve_request(request_frame, request_frame_size,
-		&request_header, &request) != QSGP_OK)
+	    qsgp_decode_header(request_frame, request_frame_size,
+		&request_header) != QSGP_OK)
 		goto out;
+	if (request_header.message_type == QSGP_EVALUATE_REQUEST) {
+		if (qsgp_decode_evaluate_request(request_frame,
+			request_frame_size, &request_header, &request) != QSGP_OK)
+			goto out;
+	} else if (qsgp_decode_reserve_request(request_frame,
+		request_frame_size, &request_header, &request) != QSGP_OK) {
+		goto out;
+	}
 	if (mode == SERVER_TIMEOUT) {
 		struct timespec delay = {.tv_nsec = 200000000L};
 
@@ -206,7 +221,10 @@ static int run_exchange(enum server_mode mode,
 	if (qfw_gateway_client_init(&client, &config, text, sizeof(text)) !=
 	    QFW_GATEWAY_OK)
 		return QSGP_ERR_INVALID;
-	status = qfw_gateway_reserve(&client, &request, response, error);
+	if (mode == SERVER_EVALUATE_ACCEPT)
+		status = qfw_gateway_evaluate(&client, &request, response, error);
+	else
+		status = qfw_gateway_reserve(&client, &request, response, error);
 	qfw_gateway_client_destroy(&client);
 	if (waitpid(child, &child_status, 0) != child ||
 	    !WIFEXITED(child_status) || WEXITSTATUS(child_status) != 0)
@@ -245,6 +263,10 @@ static int test_exchanges(void)
 	CHECK(status == QFW_GATEWAY_OK);
 	CHECK(response.request_id == 99);
 	CHECK(response.results[0].reservation_id == 41);
+	status = run_exchange(SERVER_EVALUATE_ACCEPT, &response, &error);
+	CHECK(status == QFW_GATEWAY_OK);
+	CHECK(response.request_id == 99);
+	CHECK(!response.results[0].has_reservation_id);
 	status = run_exchange(SERVER_REMOTE_ERROR, &response, &error);
 	CHECK(status == QFW_GATEWAY_ERR_REMOTE);
 	CHECK(error.source == QFW_GATEWAY_ERROR_REMOTE);
