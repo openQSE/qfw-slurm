@@ -102,16 +102,30 @@ endif()
 
 install(FILES
 	config/plugin.conf.example
+	config/resources.lua.example
 	config/gateway.yaml.example
 	config/plugstack.conf.example
 	config/qfw-slurm-gateway.env.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/config)
+install(FILES slurm/job_submit.lua
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/slurm)
 install(FILES systemd/qfw-slurm-gateway.service
 	DESTINATION ${QFW_SLURM_SYSTEMD_DIR})
 install(PROGRAMS setup/qfw_slurm_install.sh
 	DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/qfw-slurm)
 
 if(QFW_SLURM_BUILD_TESTS)
+	find_program(QFW_SLURM_LUA lua)
+	if(QFW_SLURM_LUA)
+		add_test(NAME job_submit_lua
+			COMMAND ${CMAKE_COMMAND} -E env
+				QFW_SLURM_LUA_TEST=1
+				QFW_SLURM_RESOURCES_FILE=${CMAKE_CURRENT_SOURCE_DIR}/config/resources.lua.example
+				${QFW_SLURM_LUA}
+				${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_job_submit.lua
+				${CMAKE_CURRENT_SOURCE_DIR}/slurm/job_submit.lua
+				${CMAKE_CURRENT_SOURCE_DIR}/config/resources.lua.example)
+	endif()
 	add_executable(test_qsgp_protocol tests/protocol/test_qsgp_protocol.c)
 	target_link_libraries(test_qsgp_protocol PRIVATE qsgp)
 	target_compile_options(test_qsgp_protocol PRIVATE

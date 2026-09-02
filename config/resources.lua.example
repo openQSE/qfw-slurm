@@ -1,0 +1,14 @@
+return {
+	resources = {
+		nwqsim = "nwqsim-site",
+		["ornl-iqm-20q"] = "iqm-ornl-20q",
+	},
+	partitions = {
+		quantum = {
+			allowed = {
+				nwqsim = true,
+				["ornl-iqm-20q"] = true,
+			},
+		},
+	},
+}

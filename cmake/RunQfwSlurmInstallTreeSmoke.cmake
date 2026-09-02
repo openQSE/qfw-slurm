@@ -35,9 +35,11 @@ endif()
 
 foreach(installed_file
 		share/qfw-slurm/config/plugin.conf.example
+		share/qfw-slurm/config/resources.lua.example
 		share/qfw-slurm/config/gateway.yaml.example
 		share/qfw-slurm/config/plugstack.conf.example
 		share/qfw-slurm/config/qfw-slurm-gateway.env.example
+		share/qfw-slurm/slurm/job_submit.lua
 		${QFW_SLURM_SYSTEMD_DIR}/qfw-slurm-gateway.service
 		${QFW_SLURM_INSTALL_LIBEXECDIR}/qfw-slurm/qfw_slurm_install.sh)
 	if(NOT EXISTS "${QFW_SLURM_INSTALL_PREFIX}/${installed_file}")
