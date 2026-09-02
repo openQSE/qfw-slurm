@@ -3,6 +3,7 @@ set(QFW_SLURM_MAN1_PAGES
 	man1/qfw_slurm_install.sh.1)
 
 set(QFW_SLURM_MAN5_PAGES
+	man5/qfw-slurm-burst-buffer.conf.5
 	man5/qfw-slurm-gateway.yaml.5
 	man5/qfw-slurm-plugin.conf.5)
 
@@ -10,7 +11,7 @@ set(QFW_SLURM_MAN7_PAGES
 	man7/qfw-slurm.7)
 
 set(QFW_SLURM_MAN8_PAGES
-	man8/qfw-slurm-epilog.8
+	man8/qfw-slurm-bb.8
 	man8/qfw-slurm-gateway-launch.8
 	man8/qfw-slurm-gateway.8)
 

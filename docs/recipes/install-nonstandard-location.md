@@ -43,7 +43,7 @@ cd "${QFW_SLURM_SRC}"
 The script delegates the native build and installation to CMake, then installs
 the gateway wheel into the explicitly selected Python environment. Run it with
 `--without-plugin` on a development host that lacks Slurm headers. That mode
-installs the driver but omits SPANK and the controller epilog.
+installs the driver and lifecycle helper but omits SPANK.
 
 The installation does not edit `/etc/slurm`, create service accounts, or start
 the gateway. Those remain site-administrator operations.
@@ -53,7 +53,7 @@ the gateway. Those remain site-administrator operations.
 
 ```bash
 test -x "${QFW_SLURM_PREFIX}/bin/qfw-slurm-driver"
-test -x "${QFW_SLURM_PREFIX}/sbin/qfw-slurm-epilog"
+test -x "${QFW_SLURM_PREFIX}/libexec/qfw-slurm/qfw-slurm-bb"
 test -r "${QFW_SLURM_PREFIX}/share/man/man7/qfw-slurm.7"
 find "${QFW_SLURM_PREFIX}" -name spank_quantum.so -print -quit |
   grep -q .

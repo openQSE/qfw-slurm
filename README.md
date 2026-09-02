@@ -6,12 +6,13 @@ dependency.
 
 The repository provides:
 
-- `spank_quantum.so`, which collects bounded workload requirements and exports
-  accepted reservation tuples to managed tasks.
+- `spank_quantum.so`, which collects bounded requirements at `salloc` or
+  `sbatch` time and exports already accepted reservation tuples to tasks.
+- Slurm job-submit and burst-buffer Lua providers, which evaluate QPM
+  admission before node assignment, reserve after node assignment, and
+  release during allocation teardown.
 - `qfw-slurm-gateway`, which authenticates requests, verifies Slurm jobs,
   discovers QPM services through DEFw, and maintains the SQLite journal.
-- `qfw-slurm-epilog`, which releases allocation reservations from the Slurm
-  controller.
 - `qfw-slurm-driver`, which exercises the shared lifecycle operations without
   loading SPANK or linking with libslurm.
 
@@ -28,9 +29,10 @@ man 1 qfw-slurm-driver
 man 1 qfw_slurm_install.sh
 man 8 qfw-slurm-gateway
 man 8 qfw-slurm-gateway-launch
-man 8 qfw-slurm-epilog
+man 8 qfw-slurm-bb
 man 5 qfw-slurm-plugin.conf
 man 5 qfw-slurm-gateway.yaml
+man 5 qfw-slurm-burst-buffer.conf
 ```
 
 The [recipe index](docs/recipes/README.md) provides standard and non-standard

@@ -1,40 +1,55 @@
 .TH QFW-SLURM 7 "September 2026" "qfw-slurm 0.1.0" "Miscellaneous Information"
 .SH NAME
-qfw-slurm \- Slurm allocation integration for QFw QPM reservations
+qfw-slurm \- allocation-time Slurm integration for QFw QPM reservations
 .SH OVERVIEW
-qfw-slurm maps Slurm allocation lifecycle events to QFw QPM reservations. A
-required SPANK module collects bounded workload requirements before the first
-managed task. A persistent gateway authenticates the request, verifies the job
-with slurmctld, discovers exact QPM services through DEFw, and calls their
-reservation APIs. A controller epilog releases the reservation set after the
-allocation terminates.
+qfw-slurm accepts bounded quantum requirements on
+.BR salloc (1)
+and
+.BR sbatch (1).
+It evaluates QPM admission before Slurm assigns compute nodes, performs one
+final reservation during pre-run, exports the accepted tuple set to application
+steps, and performs best-effort release during burst-buffer teardown.
 .PP
-The standalone
-.BR qfw-slurm-driver (1)
-uses the same native client and operation layer without loading SPANK. It is a
-diagnostic tool and does not validate callback placement or environment
-mutation.
+The persistent gateway authenticates lifecycle requests with MUNGE, verifies
+the job through slurmctld, resolves exact QPM services through DEFw, and owns
+the SQLite correlation journal. QPMd and qhw-admission remain authoritative
+for quantum capacity.
 .SH COMPONENTS
 .TP
 .B spank_quantum.so
-Registers Slurm options, constructs one allocation request, denies launch on
-failure, and exports accepted reservation tuples.
+Registers allocator options. In remote context it reads protected,
+already-accepted state and injects
+.B QFW_RESERVATIONS
+without contacting the gateway or modifying reservations.
+.TP
+.B job_submit.lua
+Maps allocator option metadata to exact service IDs and creates the bounded
+internal QFW burst-buffer directive. It performs no network I/O.
+.TP
+.B burst_buffer.lua
+Maps Slurm stage-in, pre-run, and teardown callbacks to the private lifecycle
+helper.
+.TP
+.BR qfw-slurm-bb (8)
+Evaluates, reserves, persists protected state, and releases through the common
+native driver.
 .TP
 .BR qfw-slurm-gateway (8)
-Serves authenticated QSGP requests and owns the durable SQLite journal.
-.TP
-.BR qfw-slurm-epilog (8)
-Performs allocation-level release from
-.BR EpilogSlurmctld .
+Serves QSGP requests and owns the durable journal.
 .TP
 .BR qfw-slurm-driver (1)
-Exercises reserve, release, or both for explicit active-job metadata.
-.SH SLURM OPTIONS
-The first managed step supplies the selected QPM resources and workload bounds.
+Exercises the same QSGP operations outside Slurm callbacks for diagnostics.
+.SH ALLOCATION OPTIONS
+Supply all options to
+.B salloc
+or
+.BR sbatch ,
+never to
+.BR srun .
 .TP
 .BI --qpu = name[,name...]
-Select configured QPU resource names. Each maps to one exact stable QPM service
-ID.
+Select configured public QPU resource names. Each maps to one exact stable QPM
+service ID.
 .TP
 .BI --workload-kind = kind
 Select
@@ -52,7 +67,7 @@ Set the maximum qubits per circuit.
 Set the maximum circuit depth.
 .TP
 .BI --max-shots = count
-Set the maximum shots.
+Set the maximum shots per circuit.
 .TP
 .BI --max-one-q-gates = count
 Set the optional one-qubit gate bound.
@@ -62,46 +77,53 @@ Set the optional two-qubit gate bound.
 .TP
 .BI --max-measurements = count
 Set the optional measurement bound.
+.SH SCHEDULING LIFECYCLE
+A delayed evaluation leaves the job pending without compute nodes and without
+a QPM reservation. Slurm owns repeated stage-in polling. The gateway performs
+one QPM evaluation per request and never polls autonomously.
+.PP
+After every classical component is assigned, pre-run makes one final reserve
+request. Acceptance permits execution. Delay makes Slurm deallocate the nodes
+and retry through its normal burst-buffer scheduling path. The configured
+attempt limit converts repeated final delay into terminal rejection.
+.PP
+Permanent admission rejection cancels the complete allocation. Teardown always
+returns success to Slurm after attempting release, while unresolved release
+details remain in protected state and the gateway journal.
 .SH RESERVATION ENVIRONMENT
-After acceptance, the plugin installs
+Every application step receives
 .B QFW_RESERVATIONS
-in the task environment. Its canonical JSON value is an array of unique
-service-ID and reservation-ID tuples:
+as canonical JSON containing unique service-ID and decimal reservation-ID
+tuples. For example:
 .PP
 .RS
 .B [["nwqsim-site","41"],["iqm-ornl-20q","17"]]
 .RE
 .PP
-Reservation IDs are decimal strings. A later managed step requesting the same
-service set receives the stored tuple set without creating another QPM
-reservation. A conflicting service set is rejected.
-.SH LIFECYCLE
-The gateway treats reserve as an allocation-level atomic operation. If one QPM
-rejects or fails, the gateway releases every reservation already accepted by
-that request before returning failure.
-.PP
-Release is exhaustive. Every QPM result is visited even when another service
-is unavailable. Terminal releases are recorded as
-.BR released .
-Authorization, QPM, or gateway failures produce
-.B release-incomplete
-state and remain available for operator retry.
-.SH AUTHENTICATION
-QSGP frames are encoded in network byte order and protected by MUNGE. The
-gateway verifies both the MUNGE sender and authoritative Slurm job identity.
-It never receives application circuits or provider credentials.
-.SH VALIDATION BOUNDARIES
-Native tests cover protocol, client, and operation behavior. The deterministic
-gateway suite covers synchronous request and journal behavior without a live
-QPM. Driver testing against a production gateway covers DEFw and QPM calls.
-Only an actual
+The value is created once per allocation and reused by later
 .B srun
-test covers SPANK callback placement, option propagation, and
-.BR spank_setenv (3).
+steps. Passing reservation options to
+.B srun
+is an error.
+.SH SECURITY
+QSGP frames use network byte order and MUNGE protection. The gateway verifies
+the authenticated service UID and authoritative Slurm job identity. Protected
+state is owned by SlurmUser and is not writable by allocation users. Provider
+credentials never enter Slurm metadata, state files, or application
+environments.
+.SH LIMITATIONS
+Slurm supports one configured burst-buffer provider. A site already using a
+different provider must combine the behavior or use another controller
+integration.
+.PP
+Evaluation is non-binding. Capacity may disappear before final reserve. This
+is why a delayed final decision deallocates nodes and retries rather than
+starting the application.
 .SH SEE ALSO
 .BR qfw-slurm-driver (1),
+.BR qfw-slurm-burst-buffer.conf (5),
 .BR qfw-slurm-gateway.yaml (5),
 .BR qfw-slurm-plugin.conf (5),
+.BR qfw-slurm-bb (8),
 .BR qfw-slurm-gateway (8),
-.BR qfw-slurm-gateway-launch (8),
-.BR qfw-slurm-epilog (8)
+.BR qfw-slurm-gateway-launch (8)

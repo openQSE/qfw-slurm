@@ -1,0 +1,50 @@
+.TH QFW-SLURM-BURST-BUFFER.CONF 5 "September 2026" "qfw-slurm 0.1.0" "File Formats"
+.SH NAME
+qfw-slurm-burst-buffer.conf \- qfw-slurm Lua lifecycle configuration
+.SH SYNOPSIS
+.I /etc/qfw-slurm/burst-buffer.lua.conf
+.SH DESCRIPTION
+This root-owned Lua file returns a table used by
+.IR burst_buffer.lua .
+It must not be writable by allocation users.
+.SH FIELDS
+.TP
+.BI cluster = "name"
+Set the authoritative Slurm cluster name used when teardown must recover a
+reservation whose local state file is missing.
+.TP
+.BI helper = "path"
+Set the absolute path to the private
+.BR qfw-slurm-bb (8)
+helper.
+.TP
+.BI driver = "path"
+Set the absolute path to
+.BR qfw-slurm-driver (1).
+.TP
+.BI plugin_config = "path"
+Set the protected native gateway configuration.
+.TP
+.BI state_dir = "path"
+Set the SlurmUser-owned directory containing allocation JSON and environment
+records. Compute-node slurmstepd processes must see the same path when the
+SPANK module injects application context.
+.TP
+.BI max_reservation_attempts = count
+Set the positive maximum number of final reservation attempts. Exhaustion is
+terminal and cancels the job.
+.SH EXAMPLE
+.nf
+return {
+        cluster = "qfw-cluster",
+        helper = "/usr/libexec/qfw-slurm/qfw-slurm-bb",
+        driver = "/usr/bin/qfw-slurm-driver",
+        plugin_config = "/etc/qfw-slurm/plugin.conf",
+        state_dir = "/var/lib/qfw-slurm/allocations",
+        max_reservation_attempts = 8,
+}
+.fi
+.SH SEE ALSO
+.BR qfw-slurm-plugin.conf (5),
+.BR qfw-slurm (7),
+.BR qfw-slurm-bb (8)

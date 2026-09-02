@@ -29,8 +29,8 @@ qfw-slurm-gateway \- serve and inspect QFw Slurm reservations
 .RI [ --request-id " id" ]
 .SH DESCRIPTION
 .B qfw-slurm-gateway
-provides the authenticated QSGP endpoint used by the SPANK plugin, controller
-epilog, and diagnostic driver. It verifies job identity through slurmctld,
+provides the authenticated QSGP endpoint used by the Slurm lifecycle helper
+and diagnostic driver. It verifies job identity through slurmctld,
 resolves exact QPM services through DEFw, and journals reserve and release
 operations in SQLite.
 .PP
@@ -107,4 +107,4 @@ Default durable journal path in the packaged example.
 .BR qfw-slurm-gateway.yaml (5),
 .BR qfw-slurm (7),
 .BR qfw-slurm-gateway-launch (8),
-.BR qfw-slurm-epilog (8)
+.BR qfw-slurm-bb (8)

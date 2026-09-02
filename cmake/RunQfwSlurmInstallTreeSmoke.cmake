@@ -22,7 +22,7 @@ endif()
 
 foreach(command_path
 		bin/qfw-slurm-driver
-		sbin/qfw-slurm-epilog)
+		libexec/qfw-slurm/qfw-slurm-bb)
 	if(NOT EXISTS "${QFW_SLURM_INSTALL_PREFIX}/${command_path}")
 		message(FATAL_ERROR "missing installed command: ${command_path}")
 	endif()
@@ -37,6 +37,7 @@ foreach(installed_file
 		share/qfw-slurm/config/plugin.conf.example
 		share/qfw-slurm/config/resources.lua.example
 		share/qfw-slurm/config/burst_buffer.conf.example
+		share/qfw-slurm/config/burst-buffer.lua.conf.example
 		share/qfw-slurm/config/gateway.yaml.example
 		share/qfw-slurm/config/plugstack.conf.example
 		share/qfw-slurm/config/qfw-slurm-gateway.env.example
@@ -55,10 +56,11 @@ set(man_root
 foreach(man_page
 		man1/qfw-slurm-driver.1
 		man1/qfw_slurm_install.sh.1
+		man5/qfw-slurm-burst-buffer.conf.5
 		man5/qfw-slurm-gateway.yaml.5
 		man5/qfw-slurm-plugin.conf.5
 		man7/qfw-slurm.7
-		man8/qfw-slurm-epilog.8
+		man8/qfw-slurm-bb.8
 		man8/qfw-slurm-gateway-launch.8
 		man8/qfw-slurm-gateway.8)
 	if(NOT EXISTS "${man_root}/${man_page}")

@@ -92,18 +92,13 @@ if(QFW_SLURM_BUILD_PLUGIN)
 	install(TARGETS spank_quantum
 		LIBRARY DESTINATION ${QFW_SLURM_PLUGIN_DIR})
 
-	add_executable(qfw-slurm-epilog src/epilog/qfw_slurm_epilog.c)
-	target_link_libraries(qfw-slurm-epilog PRIVATE qfw_slurm_operations)
-	target_compile_options(qfw-slurm-epilog PRIVATE
-		-Wall -Wextra -Werror -Wpedantic)
-	install(TARGETS qfw-slurm-epilog
-		RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
 endif()
 
 install(FILES
 	config/plugin.conf.example
 	config/resources.lua.example
 	config/burst_buffer.conf.example
+	config/burst-buffer.lua.conf.example
 	config/gateway.yaml.example
 	config/plugstack.conf.example
 	config/qfw-slurm-gateway.env.example

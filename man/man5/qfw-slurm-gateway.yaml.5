@@ -33,8 +33,8 @@ Must be
 .TP
 .B accepted-uids
 User names or numeric UIDs permitted to originate lifecycle requests. A normal
-site includes root for remote SPANK callbacks and the configured Slurm
-controller user for epilog requests.
+site includes the configured Slurm controller user for burst-buffer lifecycle
+requests and may include root for explicit administrator diagnostics.
 .TP
 .B expected-plugin-name
 Authenticated QSGP caller name. The current protocol uses

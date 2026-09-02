@@ -3,15 +3,13 @@
 qfw-slurm-plugin.conf \- native gateway client and QPU resource mapping
 .SH DESCRIPTION
 .B qfw-slurm-plugin.conf
-is an INI file read by the SPANK plugin, controller epilog, and standalone
-driver. It defines one authenticated gateway endpoint and maps each Slurm
+is an INI file read by the Slurm lifecycle helper and standalone driver. It
+defines one authenticated gateway endpoint and maps each Slurm
 .B --qpu
 name to one exact directory-service QPM service ID.
 .PP
 The file must be owned by root and must not be group- or world-writable. It
-must remain readable by remote
-.B slurmstepd
-processes and the controller's configured
+must remain readable by the controller's configured
 .BR SlurmUser .
 .SH GATEWAY SECTION
 .TP
@@ -72,4 +70,4 @@ Packaged example when the installation prefix is
 .SH SEE ALSO
 .BR qfw-slurm-driver (1),
 .BR qfw-slurm (7),
-.BR qfw-slurm-epilog (8)
+.BR qfw-slurm-bb (8)

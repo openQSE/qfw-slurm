@@ -9,8 +9,8 @@ listen:
 
 authentication:
   mechanism: munge
-  # Remote SPANK requests come from root-owned slurmstepd. Controller epilog
-  # requests come from SlurmUser, commonly named slurm.
+  # Burst-buffer lifecycle requests come from SlurmUser. Root is retained for
+  # explicit administrator diagnostics.
   accepted-uids: [root, slurm]
   expected-plugin-name: spank_quantum
 

@@ -18,7 +18,7 @@ environment.
 --python <python>     Python interpreter for the gateway installation.
 --source-dir <dir>    qfw-slurm source tree. Default: parent of this script.
 --build-dir <dir>     CMake build directory. Default: <source>/build.
---without-plugin      Build without Slurm headers, SPANK, or the epilog.
+--without-plugin      Build without Slurm headers or the SPANK module.
 --skip-gateway        Do not install the Python gateway. This also makes
                       --python optional.
 -h, --help            Show this help.

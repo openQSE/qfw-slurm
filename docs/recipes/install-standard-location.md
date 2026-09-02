@@ -75,8 +75,8 @@ find -L "${QFW_SLURM_CURRENT}" \
      -o -path '*/share/qfw-slurm/config/*' \) -print
 ```
 
-Copy and secure the site files, configure `PlugStackConfig` and
-`EpilogSlurmctld`, then follow the
+Copy and secure the site files, configure `PlugStackConfig`,
+`JobSubmitPlugins=lua`, and `BurstBufferType=burst_buffer/lua`, then follow the
 [live gateway recipe](test-live-gateway-driver.md) and
 [SPANK integration recipe](test-spank-integration.md). Command and
 configuration details are in `qfw-slurm(7)`, `qfw-slurm-plugin.conf(5)`, and
@@ -88,7 +88,7 @@ configuration details are in `qfw-slurm(7)`, `qfw-slurm-plugin.conf(5)`, and
 ```bash
 readlink -f "${QFW_SLURM_CURRENT}"
 test -x "${QFW_SLURM_CURRENT}/bin/qfw-slurm-driver"
-test -x "${QFW_SLURM_CURRENT}/sbin/qfw-slurm-epilog"
+test -x "${QFW_SLURM_CURRENT}/libexec/qfw-slurm/qfw-slurm-bb"
 test -r "${QFW_SLURM_CURRENT}/share/man/man1/qfw-slurm-driver.1"
 test -r "${QFW_SLURM_CURRENT}/share/man/man7/qfw-slurm.7"
 find -L "${QFW_SLURM_CURRENT}" -name spank_quantum.so -print -quit |
