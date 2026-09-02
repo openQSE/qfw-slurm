@@ -6,6 +6,11 @@ import sys
 
 operation = sys.argv[1]
 mode = os.environ.get("QFW_TEST_DRIVER_MODE", "accepted")
+expected_job_id = os.environ.get("QFW_TEST_EXPECT_JOB_ID")
+if expected_job_id is not None:
+    selected = sys.argv[sys.argv.index("--job-id") + 1]
+    if selected != expected_job_id:
+        raise SystemExit(f"expected job ID {expected_job_id}, got {selected}")
 with open(os.environ["QFW_TEST_DRIVER_LOG"], "a", encoding="utf-8") as stream:
     stream.write(operation + "\n")
 

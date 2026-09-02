@@ -92,6 +92,22 @@ def state_path(state_dir: Path, cluster: str, job_id: int) -> Path:
     return state_dir / f"{cluster}-{job_id}.json"
 
 
+def locate_state(args, allow_missing: bool = False) -> Path:
+    if args.cluster != "auto":
+        return state_path(args.state_dir, args.cluster, args.canonical_job_id)
+    matches = list(args.state_dir.glob(f"*-{args.job_id}.json"))
+    if len(matches) == 0 and allow_missing:
+        raise HelperError(
+            "cannot release allocation without configured Slurm cluster name"
+        )
+    if len(matches) != 1:
+        raise HelperError("cannot identify allocation state for teardown")
+    current = read_state(matches[0])
+    args.cluster = str(current.get("cluster", ""))
+    args.canonical_job_id = int(current.get("canonical_job_id", 0))
+    return state_path(args.state_dir, args.cluster, args.canonical_job_id)
+
+
 def write_state(path: Path, state: dict) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -117,6 +133,30 @@ def write_state(path: Path, state: dict) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def write_context(path: Path, reservations: list, job_id: int) -> None:
+    value = json.dumps(reservations, separators=(",", ":"))
+    targets = {path.with_suffix(".env")}
+    if str(job_id) != path.stem.rsplit("-", 1)[-1]:
+        targets.add(path.with_name(f"{path.stem.rsplit('-', 1)[0]}-{job_id}.env"))
+    for target in targets:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{target.name}.", dir=target.parent
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(f"QFW_RESERVATIONS={value}\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
 
 
 def read_state(path: Path) -> dict:
@@ -219,10 +259,22 @@ def base_state(args, result: dict, state: str) -> dict:
     }
 
 
+def reservation_attempts(path: Path) -> int:
+    try:
+        value = read_state(path).get("reservation_attempts", 0)
+    except HelperError:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise HelperError("allocation reservation attempt state is invalid")
+    return value
+
+
 def evaluation(args, path: Path, directive: dict[str, str]) -> int:
     result = invoke_driver(args, "evaluate", directive)
     state = result.get("state")
-    write_state(path, base_state(args, result, f"evaluation-{state}"))
+    record = base_state(args, result, f"evaluation-{state}")
+    record["reservation_attempts"] = reservation_attempts(path)
+    write_state(path, record)
     if state == "accepted":
         return EXIT_OK
     if state == "delayed":
@@ -233,15 +285,33 @@ def evaluation(args, path: Path, directive: dict[str, str]) -> int:
 
 
 def reservation(args, path: Path, directive: dict[str, str]) -> int:
+    attempts = reservation_attempts(path)
+    if attempts >= args.max_reservation_attempts:
+        record = base_state(args, {
+            "allocation_epoch": str(
+                allocation_epoch(args.submit_time, args.restart_count)
+            ),
+            "request_id": 0,
+            "diagnostic": "final QPM reservation attempt limit exhausted",
+        }, "reservation-exhausted")
+        record["reservation_attempts"] = attempts
+        write_state(path, record)
+        return EXIT_REJECTED
     result = invoke_driver(args, "reserve", directive)
     state = result.get("state")
     record = base_state(args, result, f"reservation-{state}")
+    record["reservation_attempts"] = attempts + 1
     if state == "accepted":
         reservations = result.get("reservations")
         if not isinstance(reservations, list) or not reservations:
             raise HelperError("accepted reserve result has no reservations")
         record["reservations"] = reservations
         write_state(path, record)
+        if args.job_id != args.canonical_job_id:
+            write_state(
+                state_path(args.state_dir, args.cluster, args.job_id), record
+            )
+        write_context(path, reservations, args.job_id)
         return EXIT_OK
     write_state(path, record)
     if state == "delayed":
@@ -252,11 +322,29 @@ def reservation(args, path: Path, directive: dict[str, str]) -> int:
 
 
 def release(args, path: Path) -> int:
+    canonical_path = path
     try:
         current = read_state(path)
     except HelperError:
-        return EXIT_OK
-    if current.get("state") != "reservation-accepted":
+        current = base_state(args, {
+            "allocation_epoch": str(
+                allocation_epoch(args.submit_time, args.restart_count)
+            ),
+            "request_id": 0,
+            "diagnostic": "local reservation state was unavailable",
+        }, "release-recovery")
+    else:
+        args.cluster = str(current.get("cluster", args.cluster))
+        args.canonical_job_id = int(
+            current.get("canonical_job_id", args.canonical_job_id)
+        )
+        canonical_path = state_path(
+            args.state_dir, args.cluster, args.canonical_job_id
+        )
+    if current.get("state") not in {
+        "release-recovery",
+        "reservation-accepted", "release-unresolved"
+    }:
         return EXIT_OK
     try:
         result = invoke_driver(args, "release")
@@ -268,6 +356,8 @@ def release(args, path: Path) -> int:
         current["state"] = "release-unresolved"
         current["release"] = {"diagnostic": str(error)}
     write_state(path, current)
+    if canonical_path != path:
+        write_state(canonical_path, current)
     return EXIT_OK
 
 
@@ -289,7 +379,7 @@ def parser() -> argparse.ArgumentParser:
     output.add_argument("--state-dir", type=Path, default=Path("/var/lib/qfw-slurm/allocations"))
     output.add_argument("--job-script", type=Path)
     output.add_argument("--path-file", type=Path)
-    output.add_argument("--cluster", required=True)
+    output.add_argument("--cluster", default="auto")
     output.add_argument("--job-id", required=True, type=int)
     output.add_argument("--canonical-job-id", required=True, type=int)
     output.add_argument("--uid", required=True, type=int)
@@ -300,6 +390,7 @@ def parser() -> argparse.ArgumentParser:
     output.add_argument("--het-job-id", type=int, default=0)
     output.add_argument("--het-component", type=int, default=0)
     output.add_argument("--timeout-seconds", type=float, default=125.0)
+    output.add_argument("--max-reservation-attempts", type=int, default=8)
     return output
 
 
@@ -308,7 +399,9 @@ def main() -> int:
     try:
         if min(args.job_id, args.canonical_job_id, args.uid, args.gid) < 0:
             raise HelperError("invalid Slurm job identity")
-        path = state_path(args.state_dir, args.cluster, args.canonical_job_id)
+        if args.max_reservation_attempts <= 0:
+            raise HelperError("reservation attempt limit must be positive")
+        path = locate_state(args, args.operation == "release")
         if args.operation == "status":
             print(json.dumps(read_state(path), sort_keys=True))
             return EXIT_OK

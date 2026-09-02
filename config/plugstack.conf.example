@@ -1,1 +1,1 @@
-required /usr/lib64/slurm/spank_quantum.so
+required /usr/lib64/slurm/spank_quantum.so state-dir=/var/lib/qfw-slurm/allocations state-owner-uid=990

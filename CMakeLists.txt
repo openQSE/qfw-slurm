@@ -103,11 +103,12 @@ endif()
 install(FILES
 	config/plugin.conf.example
 	config/resources.lua.example
+	config/burst_buffer.conf.example
 	config/gateway.yaml.example
 	config/plugstack.conf.example
 	config/qfw-slurm-gateway.env.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/config)
-install(FILES slurm/job_submit.lua
+install(FILES slurm/job_submit.lua slurm/burst_buffer.lua
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/slurm)
 install(PROGRAMS slurm/qfw_slurm_bb.py
 	RENAME qfw-slurm-bb
@@ -128,6 +129,13 @@ if(QFW_SLURM_BUILD_TESTS)
 				${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_job_submit.lua
 				${CMAKE_CURRENT_SOURCE_DIR}/slurm/job_submit.lua
 				${CMAKE_CURRENT_SOURCE_DIR}/config/resources.lua.example)
+		add_test(NAME burst_buffer_lua
+			COMMAND ${CMAKE_COMMAND} -E env
+				QFW_SLURM_LUA_TEST=1
+				${QFW_SLURM_LUA}
+				${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_burst_buffer.lua
+				${CMAKE_CURRENT_SOURCE_DIR}/slurm/burst_buffer.lua
+				${CMAKE_CURRENT_BINARY_DIR}/burst-buffer-lua-test)
 	endif()
 	add_executable(test_qsgp_protocol tests/protocol/test_qsgp_protocol.c)
 	target_link_libraries(test_qsgp_protocol PRIVATE qsgp)
