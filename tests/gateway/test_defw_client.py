@@ -10,6 +10,8 @@ from qfw_slurm_gateway.defw_client import (
     QPMBinding,
 )
 from qfw_slurm_gateway.protocol import (
+    AdmissionDecision,
+    EvaluateRequest,
     ReserveRequest,
     Workload,
     WorkloadKind,
@@ -47,6 +49,10 @@ class Admission:
         self.request = request
         return self.result
 
+    def evaluate(self, request):
+        self.request = request
+        return self.result
+
     def release(self, reservation_id, reason):
         self.releases.append((reservation_id, reason))
         return {"status": "released"}
@@ -75,6 +81,72 @@ def test_reserve_maps_trusted_slurm_metadata() -> None:
     assert admission.request["scope_id"] == "project:normal"
     assert admission.request["priority"] == 17
     assert admission.request["owner"]["user"] == "user-a"
+
+
+def test_evaluate_maps_metadata_without_reserving() -> None:
+    admission = Admission({"status": "accepted"})
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request = EvaluateRequest(
+        7,
+        "cluster",
+        42,
+        1001,
+        1002,
+        Workload(WorkloadKind.QUANTUM, 10, 1, 2, 3, 4),
+        ("nwqsim",),
+    )
+    job = VerifiedJob(
+        "cluster", 42, 1001, 1002, "user-a", "project", "normal", 17,
+        "PENDING",
+    )
+
+    result = QFwAdapter("/site.yaml").evaluate(binding, request, job)
+
+    assert result.decision == AdmissionDecision.ACCEPTED
+    assert result.reservation_id is None
+    assert admission.request["scope_id"] == "project:normal"
+
+
+def test_evaluate_accepts_zero_reservation_sentinel() -> None:
+    admission = Admission({"status": "accepted", "reservation_id": 0})
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request = EvaluateRequest(
+        7,
+        "cluster",
+        42,
+        1001,
+        1002,
+        Workload(WorkloadKind.QUANTUM, 10, 1, 2, 3, 4),
+        ("nwqsim",),
+    )
+    job = VerifiedJob(
+        "cluster", 42, 1001, 1002, "user-a", None, None, None, "PENDING"
+    )
+
+    result = QFwAdapter("/site.yaml").evaluate(binding, request, job)
+
+    assert result.decision == AdmissionDecision.ACCEPTED
+    assert result.reservation_id is None
+
+
+def test_evaluate_rejects_reservation_id() -> None:
+    admission = Admission({"status": "accepted", "reservation_id": 41})
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request = EvaluateRequest(
+        7,
+        "cluster",
+        42,
+        1001,
+        1002,
+        Workload(WorkloadKind.QUANTUM, 10, 1, 2, 3, 4),
+        ("nwqsim",),
+    )
+    job = VerifiedJob(
+        "cluster", 42, 1001, 1002, "user-a", None, None, None, "PENDING"
+    )
+
+    with pytest.raises(QFwAdapterError, match="returned a reservation ID"):
+        QFwAdapter("/site.yaml").evaluate(binding, request, job)
 
 
 def test_accepted_reservation_requires_nonzero_id() -> None:

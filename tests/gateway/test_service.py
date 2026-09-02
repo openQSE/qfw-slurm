@@ -7,6 +7,8 @@ from qfw_slurm_gateway.defw_client import QPMBinding
 from qfw_slurm_gateway.journal import Journal
 from qfw_slurm_gateway.protocol import (
     AdmissionDecision,
+    EvaluateRequest,
+    EvaluateResponse,
     GatewayError,
     ReleaseRequest,
     ReleaseResponse,
@@ -56,6 +58,7 @@ class FakeAdapter:
     def __init__(self, decisions=None):
         self.decisions = decisions or {}
         self.reserves = []
+        self.evaluates = []
         self.releases = []
         self.generations = {}
 
@@ -68,6 +71,8 @@ class FakeAdapter:
         decision = self.decisions.get(
             binding.service_id, AdmissionDecision.ACCEPTED
         )
+        if isinstance(decision, list):
+            decision = decision.pop(0)
         return ServiceResult(
             binding.service_id,
             decision,
@@ -79,6 +84,25 @@ class FakeAdapter:
             qpm_generation=binding.generation,
         )
 
+    def evaluate(self, binding, request, job):
+        self.evaluates.append(binding.service_id)
+        configured = self.decisions.get(
+            binding.service_id, AdmissionDecision.ACCEPTED
+        )
+        if isinstance(configured, list):
+            decision = configured.pop(0)
+        else:
+            decision = configured
+        return ServiceResult(
+            binding.service_id,
+            decision,
+            0 if decision == AdmissionDecision.ACCEPTED else 9,
+            retry_after_ns=1_000_000
+            if decision == AdmissionDecision.DELAYED
+            else None,
+            qpm_runtime_id=binding.runtime_id,
+            qpm_generation=binding.generation,
+        )
     def release(self, binding, reservation_id, reason):
         self.releases.append((binding.service_id, reservation_id, reason))
         return {"status": "accepted"}
@@ -106,6 +130,60 @@ def request(request_id=1):
         Workload(WorkloadKind.QUANTUM, 100, 2, 5, 10, 20),
         ("svc-a", "svc-b"),
     )
+
+
+def evaluate_request(request_id=1):
+    return EvaluateRequest(**request(request_id).__dict__)
+
+
+def test_evaluate_is_nonbinding_and_terminal_results_replay(tmp_path) -> None:
+    asyncio.run(_evaluate_is_nonbinding_and_terminal_results_replay(tmp_path))
+
+
+async def _evaluate_is_nonbinding_and_terminal_results_replay(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    first = await service.handle(evaluate_request(), 1001)
+    replay = await service.handle(evaluate_request(), 1001)
+
+    assert isinstance(first, EvaluateResponse)
+    assert first.decision == AdmissionDecision.ACCEPTED
+    assert replay == first
+    assert adapter.evaluates == ["svc-a", "svc-b"]
+    assert adapter.reserves == []
+    assert all(item.reservation_id is None for item in first.results)
+    assert journal.allocation_status("cluster", 100)["state"] == "not-found"
+    journal.close()
+
+
+def test_delayed_evaluation_calls_qpm_on_each_poll(tmp_path) -> None:
+    asyncio.run(_delayed_evaluation_calls_qpm_on_each_poll(tmp_path))
+
+
+async def _delayed_evaluation_calls_qpm_on_each_poll(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter(
+        {
+            "svc-a": [
+                AdmissionDecision.DELAYED,
+                AdmissionDecision.ACCEPTED,
+            ]
+        }
+    )
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    delayed = await service.handle(evaluate_request(), 1001)
+    accepted = await service.handle(evaluate_request(), 1001)
+
+    assert isinstance(delayed, EvaluateResponse)
+    assert delayed.decision == AdmissionDecision.DELAYED
+    assert isinstance(accepted, EvaluateResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert adapter.evaluates.count("svc-a") == 2
+    assert adapter.evaluates.count("svc-b") == 2
+    journal.close()
 
 
 def test_atomic_reserve_replay_and_release(tmp_path) -> None:
@@ -148,6 +226,33 @@ async def _atomic_reserve_replay_and_release(tmp_path) -> None:
 
 def test_partial_reserve_is_rolled_back(tmp_path) -> None:
     asyncio.run(_partial_reserve_is_rolled_back(tmp_path))
+
+
+def test_delayed_final_reserve_retries_with_new_operation(tmp_path) -> None:
+    asyncio.run(_delayed_final_reserve_retries_with_new_operation(tmp_path))
+
+
+async def _delayed_final_reserve_retries_with_new_operation(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter(
+        {
+            "svc-a": [
+                AdmissionDecision.DELAYED,
+                AdmissionDecision.ACCEPTED,
+            ]
+        }
+    )
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    delayed = await service.handle(request(10), 1001)
+    accepted = await service.handle(request(11), 1001)
+
+    assert isinstance(delayed, ReserveResponse)
+    assert delayed.decision == AdmissionDecision.DELAYED
+    assert isinstance(accepted, ReserveResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert adapter.reserves == ["svc-a", "svc-a", "svc-b"]
+    journal.close()
 
 
 async def _partial_reserve_is_rolled_back(tmp_path) -> None:

@@ -9,6 +9,8 @@ from qfw_slurm_gateway.authentication import PeerIdentity
 from qfw_slurm_gateway.config import GatewayConfig
 from qfw_slurm_gateway.protocol import (
     AdmissionDecision,
+    EvaluateRequest,
+    EvaluateResponse,
     MessageType,
     ReserveRequest,
     ReserveResponse,
@@ -16,6 +18,7 @@ from qfw_slurm_gateway.protocol import (
     Workload,
     WorkloadKind,
     decode_header,
+    encode_evaluate_request,
     encode_reserve_request,
 )
 from qfw_slurm_gateway.server import GatewayServer
@@ -32,6 +35,18 @@ class PassthroughAuthenticator:
 class FakeService:
     async def handle(self, request, sender_uid):
         assert sender_uid == 0
+        if isinstance(request, EvaluateRequest):
+            return EvaluateResponse(
+                request.request_id,
+                AdmissionDecision.ACCEPTED,
+                (
+                    ServiceResult(
+                        request.service_ids[0],
+                        AdmissionDecision.ACCEPTED,
+                        0,
+                    ),
+                ),
+            )
         return ReserveResponse(
             request.request_id,
             AdmissionDecision.ACCEPTED,
@@ -98,6 +113,41 @@ async def _one_request_per_connection(tmp_path) -> None:
 
 def test_close_cancels_stalled_client_after_bound(tmp_path) -> None:
     asyncio.run(_close_cancels_stalled_client_after_bound(tmp_path))
+
+
+def test_evaluate_uses_distinct_response_type(tmp_path) -> None:
+    asyncio.run(_evaluate_uses_distinct_response_type(tmp_path))
+
+
+async def _evaluate_uses_distinct_response_type(tmp_path) -> None:
+    server = GatewayServer(
+        config(tmp_path), FakeService(), PassthroughAuthenticator()
+    )
+    await server.start()
+    try:
+        port = server._server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        request = EvaluateRequest(
+            6,
+            "cluster",
+            10,
+            0,
+            0,
+            Workload(WorkloadKind.QUANTUM, 1, 1, 1, 1, 1),
+            ("nwqsim",),
+        )
+        frame = encode_evaluate_request(request, 100)
+        writer.write(struct.pack("!I", len(frame)) + frame)
+        await writer.drain()
+        size = struct.unpack("!I", await reader.readexactly(4))[0]
+        response = await reader.readexactly(size)
+        header = decode_header(response)
+        assert header.message_type == MessageType.EVALUATE_RESPONSE
+        assert header.correlation_id == 100
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await server.close()
 
 
 async def _close_cancels_stalled_client_after_bound(tmp_path) -> None:

@@ -117,6 +117,35 @@ class DeterministicAdapter:
             ),
         )
 
+    def evaluate(self, binding, request, job) -> ServiceResult:
+        del request, job
+        if self.mode in {"qpm-failure", "malformed-qpm"}:
+            detail = (
+                "configured QPM operation failure"
+                if self.mode == "qpm-failure"
+                else "configured malformed QPM result"
+            )
+            raise QFwAdapterError(detail)
+        if self.mode == "timeout":
+            time.sleep(self.timeout_seconds * 2)
+            raise QFwAdapterError("configured QPM deadline expiry")
+        decision = {
+            "delayed": AdmissionDecision.DELAYED,
+            "rejected": AdmissionDecision.REJECTED,
+        }.get(self.mode, AdmissionDecision.ACCEPTED)
+        return ServiceResult(
+            binding.service_id,
+            decision,
+            0 if decision == AdmissionDecision.ACCEPTED else 9,
+            qpm_runtime_id=binding.runtime_id,
+            qpm_generation=binding.generation,
+            diagnostic=(
+                None
+                if decision == AdmissionDecision.ACCEPTED
+                else f"configured {decision.name.lower()} evaluation"
+            ),
+        )
+
     def release(self, binding, reservation_id: int, reason: int):
         del binding, reservation_id, reason
         if self.mode == "release-unresolved":

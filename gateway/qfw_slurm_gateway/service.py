@@ -14,6 +14,8 @@ from .journal import Journal, JournalError, ReservationRecord, RequestConflict
 from .protocol import (
     AdmissionDecision,
     ErrorResponse,
+    EvaluateRequest,
+    EvaluateResponse,
     GatewayError,
     ReleaseRequest,
     ReleaseResponse,
@@ -66,7 +68,9 @@ def _reservation_fingerprint(request: ReserveRequest) -> str:
     )
 
 
-def _operation_scope(request: ReserveRequest | ReleaseRequest) -> str:
+def _operation_scope(
+    request: EvaluateRequest | ReserveRequest | ReleaseRequest,
+) -> str:
     if isinstance(request, ReserveRequest) and request.hetero_job_id is not None:
         return f"heterogeneous:{request.hetero_job_id}:{request.hetero_component}"
     return "allocation"
@@ -97,13 +101,90 @@ class GatewayService:
         return lock
 
     async def handle(
-        self, request: ReserveRequest | ReleaseRequest, sender_uid: int
-    ) -> ReserveResponse | ReleaseResponse | ErrorResponse:
+        self,
+        request: EvaluateRequest | ReserveRequest | ReleaseRequest,
+        sender_uid: int,
+    ) -> EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse:
         key = (request.cluster_name, request.canonical_job_id)
         async with self._allocation_lock(key):
+            if isinstance(request, EvaluateRequest):
+                return await self._evaluate(request, sender_uid)
             if isinstance(request, ReserveRequest):
                 return await self._reserve(request, sender_uid)
             return await self._release(request, sender_uid)
+
+    async def _evaluate(
+        self, request: EvaluateRequest, sender_uid: int
+    ) -> EvaluateResponse | ErrorResponse:
+        try:
+            job = await asyncio.to_thread(
+                self.verifier.verify_reserve, request, sender_uid
+            )
+            fingerprint = _fingerprint(request)
+            scope = _operation_scope(request)
+            prior = self.journal.begin_operation(
+                sender_uid,
+                "evaluate",
+                request.request_id,
+                fingerprint,
+                scope,
+            )
+            if prior is not None:
+                if prior.state != "complete" or prior.response is None:
+                    raise JournalError("evaluate operation requires recovery")
+                response = response_from_dict(prior.response)
+                if not isinstance(response, EvaluateResponse):
+                    raise JournalError("stored evaluate response has wrong type")
+                return response
+            results = []
+            for service_id in sorted(request.service_ids):
+                binding = await asyncio.to_thread(self.adapter.resolve, service_id)
+                result = await asyncio.to_thread(
+                    self.adapter.evaluate, binding, request, job
+                )
+                if result.reservation_id is not None:
+                    raise QFwAdapterError(
+                        f"QPM {service_id!r} evaluation returned a reservation"
+                    )
+                results.append(result)
+            decisions = {item.decision for item in results}
+            if AdmissionDecision.REJECTED in decisions:
+                decision = AdmissionDecision.REJECTED
+            elif AdmissionDecision.DELAYED in decisions:
+                decision = AdmissionDecision.DELAYED
+            else:
+                decision = AdmissionDecision.ACCEPTED
+            response = EvaluateResponse(
+                request.request_id, decision, tuple(results)
+            )
+            state = (
+                "retryable"
+                if decision == AdmissionDecision.DELAYED
+                else "complete"
+            )
+            self.journal.complete_operation(
+                sender_uid,
+                "evaluate",
+                request.request_id,
+                response_to_dict(response),
+                scope,
+                state,
+            )
+            return response
+        except RequestConflict as error:
+            return _error(GatewayError.REQUEST_CONFLICT, request.request_id, error)
+        except SlurmVerificationError as error:
+            return _error(GatewayError.UNAUTHORIZED, request.request_id, error)
+        except QFwAdapterError as error:
+            return _error(GatewayError.QPM, request.request_id, error)
+        except JournalError as error:
+            return _error(GatewayError.INTERNAL, request.request_id, error)
+        except Exception as error:
+            return _error(
+                GatewayError.INTERNAL,
+                request.request_id,
+                f"unexpected evaluate failure: {error}",
+            )
 
     async def _reserve(
         self, request: ReserveRequest, sender_uid: int
@@ -227,11 +308,11 @@ class GatewayService:
                         plan.existing_services,
                         plan.existing_response,
                     )
-            state = (
-                "accepted"
-                if response.decision == AdmissionDecision.ACCEPTED
-                else "not-accepted"
-            )
+            state = {
+                AdmissionDecision.ACCEPTED: "accepted",
+                AdmissionDecision.DELAYED: "delayed",
+                AdmissionDecision.REJECTED: "rejected",
+            }[response.decision]
             encoded = response_to_dict(response)
             if not plan.is_extension or state == "accepted":
                 self.journal.complete_allocation(
@@ -464,7 +545,7 @@ class GatewayService:
     async def _release_one(
         self, request: ReleaseRequest, record: ReservationRecord
     ) -> ReleaseResult:
-        terminal = {"released", "rolled-back", "not-accepted"}
+        terminal = {"released", "rolled-back", "delayed", "rejected"}
         if record.state in terminal or record.reservation_id is None:
             return ReleaseResult(
                 record.service_id,

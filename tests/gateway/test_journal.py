@@ -20,6 +20,24 @@ def test_operation_replay_and_conflict(tmp_path) -> None:
     journal.close()
 
 
+def test_retryable_operation_starts_again(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    assert journal.begin_operation(0, "evaluate", 7, "abc") is None
+    journal.complete_operation(
+        0,
+        "evaluate",
+        7,
+        {"decision": "delayed"},
+        state="retryable",
+    )
+    assert journal.begin_operation(0, "evaluate", 7, "abc") is None
+    journal.complete_operation(0, "evaluate", 7, {"decision": "accepted"})
+    replay = journal.begin_operation(0, "evaluate", 7, "abc")
+    assert replay is not None
+    assert replay.response == {"decision": "accepted"}
+    journal.close()
+
+
 def test_uint64_values_are_stored_as_decimal_text(tmp_path) -> None:
     journal = Journal(tmp_path / "state.db")
     largest = (1 << 64) - 1

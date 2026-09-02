@@ -10,6 +10,7 @@ from typing import Any
 
 from .protocol import (
     AdmissionDecision,
+    EvaluateRequest,
     ReserveRequest,
     ServiceResult,
     bounded_diagnostic,
@@ -126,13 +127,52 @@ class QFwAdapter:
         request: ReserveRequest,
         job: VerifiedJob,
     ) -> ServiceResult:
+        payload = self._admission_payload(request, job)
+        try:
+            raw = binding.admission.reserve(request=payload)
+        except Exception as error:
+            raise QFwAdapterError(
+                f"QPM {binding.service_id!r} reserve failed: {error}"
+            ) from error
+        try:
+            return self._normalize_admission(binding, raw, reserve=True)
+        except QFwAdapterError as error:
+            reservation_id = _accepted_reservation_id(raw)
+            if reservation_id is not None:
+                try:
+                    self.release(binding, reservation_id, 1)
+                except QFwAdapterError as cleanup_error:
+                    raise QFwAdapterError(
+                        f"{error}; malformed acceptance cleanup failed: "
+                        f"{cleanup_error}"
+                    ) from error
+            raise
+
+    def evaluate(
+        self,
+        binding: QPMBinding,
+        request: EvaluateRequest,
+        job: VerifiedJob,
+    ) -> ServiceResult:
+        payload = self._admission_payload(request, job)
+        try:
+            raw = binding.admission.evaluate(request=payload)
+        except Exception as error:
+            raise QFwAdapterError(
+                f"QPM {binding.service_id!r} evaluate failed: {error}"
+            ) from error
+        return self._normalize_admission(binding, raw, reserve=False)
+
+    def _admission_payload(
+        self, request: ReserveRequest, job: VerifiedJob
+    ) -> dict[str, Any]:
         workload = request.workload
         if workload is None:
-            raise QFwAdapterError("cannot create a reservation without workload")
+            raise QFwAdapterError("admission request lacks a workload")
         scope = ":".join(
             value for value in (job.account, job.qos) if value
         ) or request.cluster_name
-        payload = {
+        return {
             "request_id": request.request_id,
             "owner": {"user": job.username, "uid": job.uid, "gid": job.gid},
             "job_id": str(request.canonical_job_id),
@@ -157,25 +197,6 @@ class QFwAdapter:
                 "measurement_count": workload.max_measurements or 0,
             },
         }
-        try:
-            raw = binding.admission.reserve(request=payload)
-        except Exception as error:
-            raise QFwAdapterError(
-                f"QPM {binding.service_id!r} reserve failed: {error}"
-            ) from error
-        try:
-            return self._normalize_reserve(binding, raw)
-        except QFwAdapterError as error:
-            reservation_id = _accepted_reservation_id(raw)
-            if reservation_id is not None:
-                try:
-                    self.release(binding, reservation_id, 1)
-                except QFwAdapterError as cleanup_error:
-                    raise QFwAdapterError(
-                        f"{error}; malformed acceptance cleanup failed: "
-                        f"{cleanup_error}"
-                    ) from error
-            raise
 
     def release(
         self, binding: QPMBinding, reservation_id: int, reason: int
@@ -192,11 +213,11 @@ class QFwAdapter:
             raise QFwAdapterError("QPM release returned a non-mapping")
         return result
 
-    def _normalize_reserve(
-        self, binding: QPMBinding, raw: Any
+    def _normalize_admission(
+        self, binding: QPMBinding, raw: Any, reserve: bool
     ) -> ServiceResult:
         if not isinstance(raw, dict):
-            raise QFwAdapterError("QPM reserve returned a non-mapping")
+            raise QFwAdapterError("QPM admission returned a non-mapping")
         status = str(raw.get("status", "")).lower()
         decisions = {
             "accepted": AdmissionDecision.ACCEPTED,
@@ -204,14 +225,18 @@ class QFwAdapter:
             "rejected": AdmissionDecision.REJECTED,
         }
         if status not in decisions:
-            raise QFwAdapterError(f"QPM reserve returned invalid status {status!r}")
+            raise QFwAdapterError(
+                f"QPM admission returned invalid status {status!r}"
+            )
         reservation_id = raw.get("reservation_id")
+        if reservation_id in (0, "0"):
+            reservation_id = None
         if reservation_id is not None:
             try:
                 reservation_id = int(reservation_id)
             except (TypeError, ValueError) as error:
                 raise QFwAdapterError(
-                    "QPM reserve returned an invalid reservation ID"
+                    "QPM admission returned an invalid reservation ID"
                 ) from error
         reason = raw.get("reason_code", 0)
         if (
@@ -219,21 +244,23 @@ class QFwAdapter:
             or not isinstance(reason, int)
             or not 0 <= reason < 1 << 32
         ):
-            raise QFwAdapterError("QPM reserve returned an invalid reason code")
-        if decisions[status] == AdmissionDecision.ACCEPTED and (
+            raise QFwAdapterError("QPM admission returned an invalid reason code")
+        if reserve and decisions[status] == AdmissionDecision.ACCEPTED and (
             reservation_id is None
             or not 0 < reservation_id < 1 << 64
         ):
             raise QFwAdapterError(
                 "accepted QPM reservation lacks a valid reservation ID"
             )
+        if not reserve and reservation_id is not None:
+            raise QFwAdapterError("QPM evaluation returned a reservation ID")
         diagnostic = raw.get("message") or raw.get("reason")
         return ServiceResult(
             service_id=binding.service_id,
             decision=decisions[status],
             reason_code=reason,
             reservation_id=reservation_id
-            if decisions[status] == AdmissionDecision.ACCEPTED
+            if reserve and decisions[status] == AdmissionDecision.ACCEPTED
             else None,
             retry_after_ns=_optional_int(raw.get("retry_after_ns")),
             estimated_start_ns=_optional_int(raw.get("estimated_start_ns")),

@@ -134,6 +134,22 @@ class Journal:
             if row is not None:
                 if row["fingerprint"] != fingerprint:
                     raise RequestConflict("request ID reused with different content")
+                if row["state"] == "retryable":
+                    self._connection.execute(
+                        """UPDATE operations
+                           SET state = 'started', response_json = NULL,
+                               updated_ns = ?
+                           WHERE sender_uid = ? AND operation = ?
+                                 AND request_id = ? AND scope = ?""",
+                        (
+                            self._now(),
+                            sender_uid,
+                            operation,
+                            key,
+                            scope,
+                        ),
+                    )
+                    return None
                 response = (
                     json.loads(row["response_json"])
                     if row["response_json"] is not None
@@ -156,14 +172,18 @@ class Journal:
         request_id: int,
         response: dict[str, Any],
         scope: str = "allocation",
+        state: str = "complete",
     ) -> None:
+        if state not in {"complete", "retryable"}:
+            raise JournalError("operation completion state is invalid")
         with self._lock, self._connection:
             changed = self._connection.execute(
                 """UPDATE operations
-                   SET state = 'complete', response_json = ?, updated_ns = ?
+                   SET state = ?, response_json = ?, updated_ns = ?
                    WHERE sender_uid = ? AND operation = ? AND request_id = ?
                          AND scope = ?""",
                 (
+                    state,
                     json.dumps(response, sort_keys=True, separators=(",", ":")),
                     self._now(),
                     sender_uid,
@@ -251,6 +271,22 @@ class Journal:
                         ),
                     )
                     return AllocationPlan(response, existing, missing)
+                if row["state"] == "delayed":
+                    self._connection.execute(
+                        """UPDATE allocations
+                           SET service_set_json = ?, request_fingerprint = ?,
+                               state = 'reserving', response_json = NULL,
+                               updated_ns = ?
+                           WHERE cluster_name = ? AND canonical_job_id = ?""",
+                        (
+                            service_json,
+                            fingerprint,
+                            self._now(),
+                            cluster_name,
+                            key,
+                        ),
+                    )
+                    return AllocationPlan(None, (), requested)
                 if row["state"] in {
                     "reserving",
                     "rolling-back",
@@ -480,7 +516,7 @@ class Journal:
                 """SELECT cluster_name, canonical_job_id, job_uid, job_gid,
                           state, updated_ns
                    FROM allocations
-                   WHERE state NOT IN ('released', 'not-accepted')
+                   WHERE state NOT IN ('released', 'rejected')
                    ORDER BY cluster_name, canonical_job_id"""
             ).fetchall()
         return [dict(row) for row in rows]
