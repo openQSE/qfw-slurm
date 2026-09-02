@@ -15,6 +15,7 @@
 
 enum driver_command {
 	DRIVER_COMMAND_NONE = 0,
+	DRIVER_COMMAND_EVALUATE,
 	DRIVER_COMMAND_RESERVE,
 	DRIVER_COMMAND_RELEASE,
 	DRIVER_COMMAND_LIFECYCLE,
@@ -59,7 +60,8 @@ static void signal_handler(int signal_number)
 static void usage(FILE *stream)
 {
 	(void)fprintf(stream,
-		"usage: qfw-slurm-driver <reserve|release|lifecycle> [options]\n"
+		"usage: qfw-slurm-driver "
+		"<evaluate|reserve|release|lifecycle> [options]\n"
 		"  --config PATH                 protected plugin config\n"
 		"  --cluster NAME                Slurm cluster name\n"
 		"  --job-id ID                   canonical Slurm job ID\n"
@@ -139,7 +141,9 @@ static int set_quantum_option(struct driver_options *options,
 
 static int command_from_name(const char *name, enum driver_command *command)
 {
-	if (strcmp(name, "reserve") == 0)
+	if (strcmp(name, "evaluate") == 0)
+		*command = DRIVER_COMMAND_EVALUATE;
+	else if (strcmp(name, "reserve") == 0)
 		*command = DRIVER_COMMAND_RESERVE;
 	else if (strcmp(name, "release") == 0)
 		*command = DRIVER_COMMAND_RELEASE;
@@ -398,20 +402,23 @@ static void print_json_string(const char *value)
 static void print_reserve(const struct driver_options *options,
 	const struct qfw_reserve_operation_result *result)
 {
+	const char *operation = options->command == DRIVER_COMMAND_EVALUATE ?
+		"evaluate" : "reserve";
 	size_t index;
 
 	if (options->json) {
 		(void)printf("{\"schema\":\"qfw-slurm-driver-v1\","
-			"\"operation\":\"reserve\",\"request_id\":%" PRIu64
-			",\"state\":", result->request.request_id);
+			"\"operation\":\"%s\",\"request_id\":%" PRIu64
+			",\"state\":", operation, result->request.request_id);
 		print_json_string(operation_name(result->state));
 		(void)printf(",\"diagnostic\":");
 		print_json_string(result->diagnostic);
 		(void)printf(",\"reservations\":%s}\n",
-			result->state == QFW_OPERATION_ACCEPTED ?
+			result->state == QFW_OPERATION_ACCEPTED &&
+			options->command != DRIVER_COMMAND_EVALUATE ?
 			result->reservations_json : "null");
 	} else {
-		(void)printf("reserve request=%" PRIu64 " state=%s\n",
+		(void)printf("%s request=%" PRIu64 " state=%s\n", operation,
 			result->request.request_id, operation_name(result->state));
 		if (result->diagnostic[0] != '\0')
 			(void)printf("diagnostic: %s\n", result->diagnostic);
@@ -426,7 +433,8 @@ static void print_reserve(const struct driver_options *options,
 					item->reservation_id);
 			(void)putchar('\n');
 		}
-		if (result->state == QFW_OPERATION_ACCEPTED)
+		if (result->state == QFW_OPERATION_ACCEPTED &&
+		    options->command != DRIVER_COMMAND_EVALUATE)
 			(void)printf("export QFW_RESERVATIONS='%s'\n",
 				result->reservations_json);
 	}
@@ -544,12 +552,19 @@ int main(int argc, char **argv)
 		return DRIVER_EXIT_ARGUMENT;
 	}
 	if (options.command != DRIVER_COMMAND_RELEASE) {
-		(void)qfw_reserve_operation(&client, &config, &options.quantum,
-			&options.allocation, &reserve_result);
+		if (options.command == DRIVER_COMMAND_EVALUATE)
+			(void)qfw_evaluate_operation(&client, &config,
+				&options.quantum, &options.allocation,
+				&reserve_result);
+		else
+			(void)qfw_reserve_operation(&client, &config,
+				&options.quantum, &options.allocation,
+				&reserve_result);
 		print_reserve(&options, &reserve_result);
 		status = reserve_exit_status(&reserve_result);
 		if (status != DRIVER_EXIT_OK ||
-		    options.command == DRIVER_COMMAND_RESERVE) {
+		    options.command == DRIVER_COMMAND_RESERVE ||
+		    options.command == DRIVER_COMMAND_EVALUATE) {
 			qfw_gateway_client_destroy(&client);
 			return status;
 		}

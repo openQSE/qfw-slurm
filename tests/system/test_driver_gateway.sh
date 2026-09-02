@@ -155,6 +155,24 @@ expect_reserve_status()
 }
 
 start_gateway accepted
+evaluated=$(reserve_arguments evaluate)
+printf '%s\n' "${evaluated}" | grep -q '^evaluate .*state=accepted'
+if printf '%s\n' "${evaluated}" | grep -q 'reservation='; then
+	echo "evaluation returned a reservation" >&2
+	exit 1
+fi
+"${python}" - "${journal}" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+assert connection.execute(
+    "SELECT count(*) FROM allocations"
+).fetchone()[0] == 0
+assert connection.execute(
+    "SELECT state FROM operations WHERE operation = 'evaluate'"
+).fetchone() == ("complete",)
+PY
 first=$(reserve_arguments reserve)
 second=$(reserve_arguments reserve)
 first_export=$(printf '%s\n' "${first}" | grep '^export QFW_RESERVATIONS=')

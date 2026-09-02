@@ -173,6 +173,11 @@ int qfw_reserve_operation(const struct qfw_gateway_client *client,
 	const struct qfw_quantum_options *options,
 	const struct qfw_allocation_context *allocation,
 	struct qfw_reserve_operation_result *result);
+int qfw_evaluate_operation(const struct qfw_gateway_client *client,
+	const struct qfw_plugin_config *config,
+	const struct qfw_quantum_options *options,
+	const struct qfw_allocation_context *allocation,
+	struct qfw_reserve_operation_result *result);
 int qfw_release_operation(const struct qfw_gateway_client *client,
 	const struct qfw_allocation_context *allocation, uint32_t reason,
 	struct qfw_release_operation_result *result);

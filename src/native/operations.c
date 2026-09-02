@@ -44,10 +44,10 @@ static int response_error(struct qfw_reserve_operation_result *result,
 	return 0;
 }
 
-int qfw_reserve_response_process(
+static int admission_response_process(
 	const struct qsgp_reserve_request *request,
 	const struct qsgp_reserve_response *response,
-	struct qfw_reserve_operation_result *result)
+	struct qfw_reserve_operation_result *result, bool require_reservation)
 {
 	const struct qsgp_service_result *decisive = NULL;
 	size_t index;
@@ -92,13 +92,20 @@ int qfw_reserve_response_process(
 			const struct qsgp_service_result *item =
 				&response->results[index];
 
-			if (item->decision != QSGP_ADMISSION_ACCEPTED ||
-			    !item->has_reservation_id ||
-			    item->reservation_id == 0)
+			if (item->decision != QSGP_ADMISSION_ACCEPTED)
+				return response_error(result,
+					"accepted response has a nonaccepted service");
+			if (require_reservation &&
+			    (!item->has_reservation_id ||
+			     item->reservation_id == 0))
 				return response_error(result,
 					"accepted service has no valid reservation");
+			if (!require_reservation && item->has_reservation_id)
+				return response_error(result,
+					"evaluation returned a reservation identifier");
 		}
-		if (qfw_reservations_json(response, result->reservations_json,
+		if (require_reservation &&
+		    qfw_reservations_json(response, result->reservations_json,
 			sizeof(result->reservations_json)) != 0)
 			return response_error(result,
 				"cannot format the accepted reservation set");
@@ -120,6 +127,14 @@ int qfw_reserve_response_process(
 	result->state = response->decision == QSGP_ADMISSION_DELAYED ?
 		QFW_OPERATION_DELAYED : QFW_OPERATION_REJECTED;
 	return 0;
+}
+
+int qfw_reserve_response_process(
+	const struct qsgp_reserve_request *request,
+	const struct qsgp_reserve_response *response,
+	struct qfw_reserve_operation_result *result)
+{
+	return admission_response_process(request, response, result, true);
 }
 
 static void map_call_failure(uint32_t *state, char *diagnostic,
@@ -163,6 +178,43 @@ int qfw_reserve_operation(const struct qfw_gateway_client *client,
 	}
 	return qfw_reserve_response_process(&result->request,
 		&result->response, result);
+}
+
+int qfw_evaluate_operation(const struct qfw_gateway_client *client,
+	const struct qfw_plugin_config *config,
+	const struct qfw_quantum_options *options,
+	const struct qfw_allocation_context *allocation,
+	struct qfw_reserve_operation_result *result)
+{
+	int status;
+
+	if (client == NULL || config == NULL || options == NULL ||
+	    allocation == NULL || result == NULL)
+		return -1;
+	memset(result, 0, sizeof(*result));
+	status = qfw_build_reserve_request(config, options,
+		allocation->cluster_name, allocation->canonical_job_id,
+		allocation->allocation_epoch, allocation->job_uid,
+		allocation->job_gid, allocation->has_hetero,
+		allocation->hetero_job_id, allocation->hetero_component,
+		allocation->walltime_ns, &result->request,
+		result->diagnostic, sizeof(result->diagnostic));
+	if (status != 0) {
+		result->state = QFW_OPERATION_INVALID;
+		return 0;
+	}
+	result->request.request_id = qfw_request_id(
+		allocation->cluster_name, allocation->canonical_job_id,
+		allocation->allocation_epoch, QSGP_EVALUATE_REQUEST);
+	status = qfw_gateway_evaluate(client, &result->request,
+		&result->response, &result->call_error);
+	if (status != QFW_GATEWAY_OK) {
+		map_call_failure(&result->state, result->diagnostic,
+			sizeof(result->diagnostic), &result->call_error);
+		return 0;
+	}
+	return admission_response_process(&result->request,
+		&result->response, result, false);
 }
 
 static bool terminal_release_state(uint32_t state)
