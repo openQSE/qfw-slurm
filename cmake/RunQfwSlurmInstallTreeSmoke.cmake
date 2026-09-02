@@ -41,7 +41,8 @@ foreach(installed_file
 		share/qfw-slurm/config/qfw-slurm-gateway.env.example
 		share/qfw-slurm/slurm/job_submit.lua
 		${QFW_SLURM_SYSTEMD_DIR}/qfw-slurm-gateway.service
-		${QFW_SLURM_INSTALL_LIBEXECDIR}/qfw-slurm/qfw_slurm_install.sh)
+		${QFW_SLURM_INSTALL_LIBEXECDIR}/qfw-slurm/qfw_slurm_install.sh
+		${QFW_SLURM_INSTALL_LIBEXECDIR}/qfw-slurm/qfw-slurm-bb)
 	if(NOT EXISTS "${QFW_SLURM_INSTALL_PREFIX}/${installed_file}")
 		message(FATAL_ERROR "missing installed file: ${installed_file}")
 	endif()

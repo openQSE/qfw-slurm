@@ -303,6 +303,8 @@ const char *qfw_plugin_config_service_id(
 	for (index = 0; index < config->resource_count; index++) {
 		if (strcmp(config->resources[index].name, resource_name) == 0)
 			return config->resources[index].service_id;
+		if (strcmp(config->resources[index].service_id, resource_name) == 0)
+			return config->resources[index].service_id;
 	}
 	return NULL;
 }

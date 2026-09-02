@@ -109,6 +109,9 @@ install(FILES
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/config)
 install(FILES slurm/job_submit.lua
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/qfw-slurm/slurm)
+install(PROGRAMS slurm/qfw_slurm_bb.py
+	RENAME qfw-slurm-bb
+	DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/qfw-slurm)
 install(FILES systemd/qfw-slurm-gateway.service
 	DESTINATION ${QFW_SLURM_SYSTEMD_DIR})
 install(PROGRAMS setup/qfw_slurm_install.sh
@@ -171,6 +174,12 @@ if(QFW_SLURM_BUILD_TESTS)
 					QSGP_INTEROP=$<TARGET_FILE:qsgp_interop>
 					${Python3_EXECUTABLE} -m pytest -q
 					${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway)
+			add_test(NAME qfw_slurm_bb_helper
+				COMMAND ${CMAKE_COMMAND} -E env
+					QFW_TEST_BB_HELPER=${CMAKE_CURRENT_SOURCE_DIR}/slurm/qfw_slurm_bb.py
+					QFW_TEST_FAKE_DRIVER=${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/fake_driver.py
+					${Python3_EXECUTABLE} -m pytest -q
+					${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_bb_helper.py)
 		else()
 			message(STATUS
 				"Skipping gateway tests: pytest and PyYAML are required")
