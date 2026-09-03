@@ -440,6 +440,8 @@ def _encode_admission_request(
 
 
 def encode_reserve_request(request: ReserveRequest, correlation_id: int) -> bytes:
+    if request.workload is None:
+        raise ProtocolError("reserve request requires a workload envelope")
     return _encode_admission_request(
         request, correlation_id, MessageType.RESERVE_REQUEST
     )
@@ -547,6 +549,8 @@ def decode_reserve_request(frame: bytes) -> tuple[Header, ReserveRequest]:
     header, request = _decode_admission_request(
         frame, MessageType.RESERVE_REQUEST, ReserveRequest
     )
+    if request.workload is None:
+        raise ProtocolError("reserve request requires a workload envelope")
     return header, request
 
 

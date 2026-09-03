@@ -74,11 +74,9 @@ int qfw_build_reserve_request(const struct qfw_plugin_config *config,
 	request->canonical_job_id = canonical_job_id;
 	request->job_uid = job_uid;
 	request->job_gid = job_gid;
-	request->has_workload = !qfw_quantum_options_is_retrieval(options);
-	if (request->has_workload) {
-		request->workload = options->workload;
-		request->workload.walltime_ns = walltime_ns;
-	}
+	request->has_workload = true;
+	request->workload = options->workload;
+	request->workload.walltime_ns = walltime_ns;
 	request->request_id = qfw_request_id(cluster_name, canonical_job_id,
 		allocation_epoch, QSGP_RESERVE_REQUEST);
 	if (has_hetero) {

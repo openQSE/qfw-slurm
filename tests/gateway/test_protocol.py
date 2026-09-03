@@ -120,7 +120,7 @@ def test_get_reservations_round_trip() -> None:
     assert decoded_response == response
 
 
-def test_reserve_retrieval_request_round_trip() -> None:
+def test_reserve_requires_workload() -> None:
     request = reserve_request()
     request = ReserveRequest(
         request.request_id,
@@ -131,8 +131,8 @@ def test_reserve_retrieval_request_round_trip() -> None:
         None,
         request.service_ids,
     )
-    _header, decoded = decode_request(encode_reserve_request(request, 100))
-    assert decoded == request
+    with pytest.raises(ProtocolError, match="requires a workload"):
+        encode_reserve_request(request, 100)
 
 
 def test_unknown_required_field_is_rejected() -> None:

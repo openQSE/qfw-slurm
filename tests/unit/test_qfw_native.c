@@ -130,12 +130,6 @@ static int test_options(void)
 		"5", error, sizeof(error)) == 0);
 	CHECK(qfw_quantum_options_validate(&options, error,
 		sizeof(error)) != 0);
-	qfw_quantum_options_init(&options);
-	CHECK(qfw_quantum_options_set(&options, QFW_OPTION_QPU,
-		"nwqsim", error, sizeof(error)) == 0);
-	CHECK(qfw_quantum_options_is_retrieval(&options));
-	CHECK(qfw_quantum_options_validate(&options, error,
-		sizeof(error)) == 0);
 	return 0;
 }
 
@@ -194,14 +188,6 @@ static int test_request_and_environment(void)
 	CHECK(strcmp(request.service_ids[0], "iqm-ornl-20q") == 0);
 	CHECK(strcmp(request.service_ids[1], "nwqsim-site") == 0);
 	CHECK(request.workload.walltime_ns == UINT64_C(60000000000));
-	qfw_quantum_options_init(&options);
-	CHECK(qfw_quantum_options_set(&options, QFW_OPTION_QPU,
-		"nwqsim", error, sizeof(error)) == 0);
-	CHECK(qfw_build_reserve_request(&config, &options, "cluster-a", 100,
-		50, 1101, 1101, false, 0, 0, UINT64_C(60000000000),
-		&request, error, sizeof(error)) == 0);
-	CHECK(!request.has_workload);
-	CHECK(request.service_count == 1);
 	CHECK(qfw_reservations_json(&response, output, sizeof(output)) == 0);
 	CHECK(strcmp(output,
 		"[[\"iqm-ornl-20q\",\"41\"],"

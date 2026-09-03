@@ -318,10 +318,6 @@ async def _atomic_reserve_replay_and_release(tmp_path) -> None:
     assert first.decision == AdmissionDecision.ACCEPTED
     assert replay == first
 
-    retrieval = dataclasses.replace(request(3), workload=None)
-    retrieved = await service.handle(retrieval, 1001)
-    assert retrieved == dataclasses.replace(first, request_id=3)
-
     new_operation = request(4)
     reused = await service.handle(new_operation, 1001)
     assert reused == dataclasses.replace(first, request_id=4)
@@ -558,12 +554,9 @@ async def _failed_heterogeneous_extension_preserves_existing_set(tmp_path) -> No
     )
 
     rejected = await service.handle(extension, 1001)
-    retrieved = await service.handle(
-        dataclasses.replace(first_request, request_id=9, workload=None),
-        1001,
-    )
+    retrieved = await service.handle(lookup_request(9), 1001)
 
     assert rejected.decision == AdmissionDecision.REJECTED
-    assert isinstance(retrieved, ReserveResponse)
-    assert [item.service_id for item in retrieved.results] == ["svc-a"]
+    assert isinstance(retrieved, GetReservationsResponse)
+    assert [item.service_id for item in retrieved.reservations] == ["svc-a"]
     journal.close()

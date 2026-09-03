@@ -75,7 +75,7 @@ static int test_reserve_request(void)
 	return 0;
 }
 
-static int test_reserve_retrieval_request(void)
+static int test_reserve_requires_workload(void)
 {
 	struct qsgp_reserve_request input = {
 		.request_id = 8,
@@ -86,16 +86,10 @@ static int test_reserve_retrieval_request(void)
 		.service_count = 1,
 		.service_ids = {"nwqsim-site"},
 	};
-	struct qsgp_reserve_request output;
-	struct qsgp_header header;
 	struct qsgp_frame frame;
 
-	CHECK(qsgp_encode_reserve_request(&input, 9, &frame) == QSGP_OK);
-	CHECK(qsgp_decode_reserve_request(frame.data, frame.size, &header,
-		&output) == QSGP_OK);
-	CHECK(!output.has_workload);
-	CHECK(output.service_count == 1);
-	qsgp_frame_destroy(&frame);
+	CHECK(qsgp_encode_reserve_request(&input, 9, &frame) ==
+		QSGP_ERR_INVALID);
 	return 0;
 }
 
@@ -107,6 +101,15 @@ static int test_duplicate_service_request(void)
 		.canonical_job_id = 42,
 		.job_uid = 1000,
 		.job_gid = 1000,
+		.has_workload = true,
+		.workload = {
+			.kind = QSGP_WORKLOAD_QUANTUM,
+			.walltime_ns = 1000000,
+			.circuit_count = 1,
+			.max_qubits = 2,
+			.max_depth = 3,
+			.max_shots = 4,
+		},
 		.service_count = 2,
 		.service_ids = {"nwqsim-site", "nwqsim-site"},
 	};
@@ -412,7 +415,7 @@ static int test_credential_framing(void)
 int main(void)
 {
 	CHECK(test_reserve_request() == 0);
-	CHECK(test_reserve_retrieval_request() == 0);
+	CHECK(test_reserve_requires_workload() == 0);
 	CHECK(test_duplicate_service_request() == 0);
 	CHECK(test_evaluate_messages() == 0);
 	CHECK(test_reserve_response() == 0);

@@ -477,6 +477,8 @@ out:
 int qsgp_encode_reserve_request(const struct qsgp_reserve_request *request,
 	uint64_t correlation_id, struct qsgp_frame *frame)
 {
+	if (request == NULL || !request->has_workload)
+		return QSGP_ERR_INVALID;
 	return encode_admission_request(request, QSGP_RESERVE_REQUEST,
 		correlation_id, frame);
 }

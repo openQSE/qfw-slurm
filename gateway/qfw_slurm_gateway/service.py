@@ -269,24 +269,6 @@ class GatewayService:
             job = await asyncio.to_thread(
                 self.verifier.verify_reserve, request, sender_uid
             )
-            if request.workload is None:
-                existing = self.journal.accepted_allocation(
-                    request.cluster_name,
-                    request.canonical_job_id,
-                    request.job_uid,
-                    request.job_gid,
-                    request.service_ids,
-                )
-                if existing is None:
-                    return ErrorResponse(
-                        GatewayError.INVALID_REQUEST,
-                        request.request_id,
-                        "no existing reservation set and no workload envelope",
-                    )
-                response = response_from_dict(existing)
-                if not isinstance(response, ReserveResponse):
-                    raise JournalError("stored allocation response has wrong type")
-                return dataclasses.replace(response, request_id=request.request_id)
             fingerprint = _fingerprint(request)
             scope = _operation_scope(request)
             prior = self.journal.begin_operation(

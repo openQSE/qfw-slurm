@@ -357,7 +357,7 @@ class Journal:
         job_gid: int,
         service_ids: tuple[str, ...],
     ) -> dict[str, Any] | None:
-        """Return an accepted set for a workload-free retrieval request."""
+        """Return an accepted set while processing an idempotent reserve."""
 
         service_json = json.dumps(sorted(service_ids), separators=(",", ":"))
         with self._lock:
@@ -523,9 +523,18 @@ class Journal:
                 expected = tuple(json.loads(allocation["service_set_json"]))
             except (TypeError, json.JSONDecodeError) as error:
                 raise JournalError("allocation service set is malformed") from error
-            records = self.reservations(cluster_name, job_id)
+            all_records = self.reservations(cluster_name, job_id)
         if not expected or len(expected) != len(set(expected)):
             raise JournalError("allocation service set is malformed")
+        expected_set = set(expected)
+        records = tuple(
+            item for item in all_records if item.service_id in expected_set
+        )
+        if any(
+            item.state == "accepted" and item.service_id not in expected_set
+            for item in all_records
+        ):
+            raise JournalError("journal contains an unexpected active reservation")
         if tuple(item.service_id for item in records) != tuple(sorted(expected)):
             raise JournalError("accepted allocation reservation set is incomplete")
         if any(item.state != "accepted" or item.reservation_id is None for item in records):

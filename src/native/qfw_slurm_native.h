@@ -143,9 +143,6 @@ int qfw_quantum_options_set(struct qfw_quantum_options *options,
 	uint32_t field, const char *value, char *error, size_t error_size);
 int qfw_quantum_options_validate(const struct qfw_quantum_options *options,
 	char *error, size_t error_size);
-bool qfw_quantum_options_is_retrieval(
-	const struct qfw_quantum_options *options);
-
 uint64_t qfw_request_id(const char *cluster_name, uint64_t job_id,
 	uint64_t allocation_epoch, uint32_t operation);
 int qfw_build_reserve_request(const struct qfw_plugin_config *config,

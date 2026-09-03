@@ -236,8 +236,6 @@ int qfw_quantum_options_validate(const struct qfw_quantum_options *options,
 		return -1;
 	if (!options->active)
 		return 0;
-	if (qfw_quantum_options_is_retrieval(options))
-		return 0;
 	if ((options->present_fields & QFW_REQUIRED_OPTIONS) !=
 	    QFW_REQUIRED_OPTIONS) {
 		set_error(error, error_size,
@@ -253,12 +251,4 @@ int qfw_quantum_options_validate(const struct qfw_quantum_options *options,
 		return -1;
 	}
 	return 0;
-}
-
-bool qfw_quantum_options_is_retrieval(
-	const struct qfw_quantum_options *options)
-{
-	return options != NULL && options->active &&
-	       options->present_fields == QFW_OPTION_QPU &&
-	       options->qpu_count != 0;
 }

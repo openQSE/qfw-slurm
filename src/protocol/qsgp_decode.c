@@ -523,8 +523,12 @@ static int decode_admission_request(const uint8_t *data, size_t size,
 int qsgp_decode_reserve_request(const uint8_t *data, size_t size,
 	struct qsgp_header *header, struct qsgp_reserve_request *request)
 {
-	return decode_admission_request(data, size, QSGP_RESERVE_REQUEST,
+	int status = decode_admission_request(data, size, QSGP_RESERVE_REQUEST,
 		header, request);
+
+	if (status != QSGP_OK)
+		return status;
+	return request->has_workload ? QSGP_OK : QSGP_ERR_INVALID;
 }
 
 int qsgp_decode_evaluate_request(const uint8_t *data, size_t size,
