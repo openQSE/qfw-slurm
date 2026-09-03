@@ -142,7 +142,7 @@ int qsgp_tlv_string(const struct qsgp_tlv *tlv, char *value,
 bool qsgp_known_tlv(uint16_t type)
 {
 	return type >= QSGP_TLV_CLUSTER_NAME &&
-	       type <= QSGP_TLV_RELEASE_RESULT;
+	       type <= QSGP_TLV_RESERVATION;
 }
 
 static int decode_start(const uint8_t *data, size_t size,
@@ -324,6 +324,45 @@ static int decode_release_result(const struct qsgp_tlv *container,
 	    result->reservation_id == 0 ||
 	    result->state < QSGP_RESERVATION_RELEASED ||
 	    result->state > QSGP_RESERVATION_GATEWAY_FAILURE)
+		return QSGP_ERR_INVALID;
+	return QSGP_OK;
+}
+
+static int decode_reservation(const struct qsgp_tlv *container,
+	struct qsgp_reservation *reservation)
+{
+	struct qsgp_cursor cursor = {
+		.data = container->value,
+		.size = container->length,
+	};
+	struct qsgp_tlv tlv;
+	uint64_t fields = 0;
+	int status;
+
+	memset(reservation, 0, sizeof(*reservation));
+	while ((status = qsgp_cursor_next(&cursor, &tlv)) > 0) {
+		if (!qsgp_known_tlv(tlv.type))
+			continue;
+		status = mark_once(&fields, tlv.type);
+		if (status != QSGP_OK)
+			return status;
+		if (tlv.type == QSGP_TLV_SERVICE_ID)
+			status = qsgp_tlv_string(&tlv,
+				reservation->service_id,
+				QSGP_MAX_SERVICE_ID + 1U);
+		else if (tlv.type == QSGP_TLV_RESERVATION_ID)
+			status = qsgp_tlv_u64(&tlv,
+				&reservation->reservation_id);
+		else
+			return QSGP_ERR_INVALID;
+		if (status != QSGP_OK)
+			return status;
+	}
+	if (status < 0)
+		return status;
+	if (!field_present(fields, QSGP_TLV_SERVICE_ID) ||
+	    !field_present(fields, QSGP_TLV_RESERVATION_ID) ||
+	    reservation->reservation_id == 0)
 		return QSGP_ERR_INVALID;
 	return QSGP_OK;
 }
@@ -681,6 +720,129 @@ int qsgp_decode_release_response(const uint8_t *data, size_t size,
 	if (!field_present(fields, QSGP_TLV_REQUEST_ID) ||
 	    response->request_id == 0)
 		return QSGP_ERR_INVALID;
+	return QSGP_OK;
+}
+
+int qsgp_decode_get_reservations_request(const uint8_t *data, size_t size,
+	struct qsgp_header *header,
+	struct qsgp_get_reservations_request *request)
+{
+	struct qsgp_cursor cursor;
+	struct qsgp_tlv tlv;
+	uint64_t fields = 0;
+	uint32_t value32;
+	int status;
+
+	if (request == NULL)
+		return QSGP_ERR_INVALID;
+	memset(request, 0, sizeof(*request));
+	status = decode_start(data, size, QSGP_GET_RESERVATIONS_REQUEST,
+		header, &cursor);
+	if (status != QSGP_OK)
+		return status;
+	while ((status = qsgp_cursor_next(&cursor, &tlv)) > 0) {
+		if (!qsgp_known_tlv(tlv.type))
+			continue;
+		status = mark_once(&fields, tlv.type);
+		if (status != QSGP_OK)
+			return status;
+		switch (tlv.type) {
+		case QSGP_TLV_REQUEST_ID:
+			status = qsgp_tlv_u64(&tlv, &request->request_id);
+			break;
+		case QSGP_TLV_CLUSTER_NAME:
+			status = qsgp_tlv_string(&tlv, request->cluster_name,
+				QSGP_MAX_CLUSTER_NAME + 1U);
+			break;
+		case QSGP_TLV_OBSERVED_JOB_ID:
+			status = qsgp_tlv_u64(&tlv,
+				&request->observed_job_id);
+			break;
+		case QSGP_TLV_JOB_UID:
+			status = qsgp_tlv_u32(&tlv, &value32);
+			request->job_uid = (uid_t)value32;
+			break;
+		case QSGP_TLV_JOB_GID:
+			status = qsgp_tlv_u32(&tlv, &value32);
+			request->job_gid = (gid_t)value32;
+			break;
+		default:
+			return QSGP_ERR_INVALID;
+		}
+		if (status != QSGP_OK)
+			return status;
+	}
+	if (status < 0)
+		return status;
+	if (!field_present(fields, QSGP_TLV_REQUEST_ID) ||
+	    !field_present(fields, QSGP_TLV_CLUSTER_NAME) ||
+	    !field_present(fields, QSGP_TLV_OBSERVED_JOB_ID) ||
+	    !field_present(fields, QSGP_TLV_JOB_UID) ||
+	    !field_present(fields, QSGP_TLV_JOB_GID) ||
+	    request->request_id == 0 || request->observed_job_id == 0)
+		return QSGP_ERR_INVALID;
+	return QSGP_OK;
+}
+
+int qsgp_decode_get_reservations_response(const uint8_t *data, size_t size,
+	struct qsgp_header *header,
+	struct qsgp_get_reservations_response *response)
+{
+	struct qsgp_cursor cursor;
+	struct qsgp_tlv tlv;
+	uint64_t fields = 0;
+	size_t index;
+	int status;
+
+	if (response == NULL)
+		return QSGP_ERR_INVALID;
+	memset(response, 0, sizeof(*response));
+	status = decode_start(data, size, QSGP_GET_RESERVATIONS_RESPONSE,
+		header, &cursor);
+	if (status != QSGP_OK)
+		return status;
+	while ((status = qsgp_cursor_next(&cursor, &tlv)) > 0) {
+		if (!qsgp_known_tlv(tlv.type))
+			continue;
+		if (tlv.type == QSGP_TLV_RESERVATION) {
+			if (response->reservation_count >= QSGP_MAX_SERVICES)
+				return QSGP_ERR_BOUNDS;
+			status = decode_reservation(&tlv,
+				&response->reservations[response->reservation_count]);
+			if (status != QSGP_OK)
+				return status;
+			response->reservation_count++;
+			continue;
+		}
+		status = mark_once(&fields, tlv.type);
+		if (status != QSGP_OK)
+			return status;
+		if (tlv.type == QSGP_TLV_REQUEST_ID)
+			status = qsgp_tlv_u64(&tlv, &response->request_id);
+		else if (tlv.type == QSGP_TLV_CANONICAL_JOB_ID)
+			status = qsgp_tlv_u64(&tlv,
+				&response->canonical_job_id);
+		else
+			return QSGP_ERR_INVALID;
+		if (status != QSGP_OK)
+			return status;
+	}
+	if (status < 0)
+		return status;
+	if (!field_present(fields, QSGP_TLV_REQUEST_ID) ||
+	    !field_present(fields, QSGP_TLV_CANONICAL_JOB_ID) ||
+	    response->request_id == 0 || response->canonical_job_id == 0 ||
+	    response->reservation_count == 0)
+		return QSGP_ERR_INVALID;
+	for (index = 0; index < response->reservation_count; index++) {
+		size_t other;
+
+		for (other = 0; other < index; other++) {
+			if (strcmp(response->reservations[index].service_id,
+				response->reservations[other].service_id) == 0)
+				return QSGP_ERR_CONFLICT;
+		}
+	}
 	return QSGP_OK;
 }
 

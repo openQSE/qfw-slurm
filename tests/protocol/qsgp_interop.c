@@ -33,6 +33,14 @@ static const struct qsgp_reserve_request fixture = {
 	.service_ids = {"iqm-ornl-20q", "nwqsim-site"},
 };
 
+static const struct qsgp_get_reservations_request get_fixture = {
+	.request_id = UINT64_C(0x8000000000000002),
+	.cluster_name = "test-cluster",
+	.observed_job_id = 43,
+	.job_uid = 1001,
+	.job_gid = 1001,
+};
+
 static int encode_fixture(void)
 {
 	struct qsgp_frame frame;
@@ -91,12 +99,75 @@ static int decode_fixture(const char *path)
 	return 0;
 }
 
+static int encode_get_fixture(void)
+{
+	struct qsgp_frame frame;
+	int status;
+
+	status = qsgp_encode_get_reservations_request(&get_fixture, 100, &frame);
+	if (status != QSGP_OK)
+		return 1;
+	if (fwrite(frame.data, 1, frame.size, stdout) != frame.size) {
+		qsgp_frame_destroy(&frame);
+		return 1;
+	}
+	qsgp_frame_destroy(&frame);
+	return 0;
+}
+
+static int decode_get_fixture(const char *path)
+{
+	struct qsgp_get_reservations_request request;
+	struct qsgp_header header;
+	uint8_t *data;
+	long file_size;
+	FILE *stream;
+	int status;
+
+	stream = fopen(path, "rb");
+	if (stream == NULL || fseek(stream, 0, SEEK_END) != 0)
+		return 1;
+	file_size = ftell(stream);
+	if (file_size <= 0 || file_size > QSGP_MAX_FRAME_SIZE ||
+	    fseek(stream, 0, SEEK_SET) != 0) {
+		fclose(stream);
+		return 1;
+	}
+	data = malloc((size_t)file_size);
+	if (data == NULL) {
+		fclose(stream);
+		return 1;
+	}
+	if (fread(data, 1, (size_t)file_size, stream) != (size_t)file_size) {
+		free(data);
+		fclose(stream);
+		return 1;
+	}
+	fclose(stream);
+	status = qsgp_decode_get_reservations_request(data, (size_t)file_size,
+		&header, &request);
+	free(data);
+	if (status != QSGP_OK || header.correlation_id != 100 ||
+	    request.request_id != get_fixture.request_id ||
+	    request.observed_job_id != get_fixture.observed_job_id ||
+	    request.job_uid != get_fixture.job_uid ||
+	    request.job_gid != get_fixture.job_gid)
+		return 1;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc == 2 && strcmp(argv[1], "encode") == 0)
 		return encode_fixture();
 	if (argc == 3 && strcmp(argv[1], "decode") == 0)
 		return decode_fixture(argv[2]);
-	fprintf(stderr, "usage: %s encode|decode FILE\n", argv[0]);
+	if (argc == 2 && strcmp(argv[1], "encode-get") == 0)
+		return encode_get_fixture();
+	if (argc == 3 && strcmp(argv[1], "decode-get") == 0)
+		return decode_get_fixture(argv[2]);
+	fprintf(stderr,
+		"usage: %s encode|decode FILE|encode-get|decode-get FILE\n",
+		argv[0]);
 	return 2;
 }

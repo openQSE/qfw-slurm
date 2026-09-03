@@ -36,9 +36,11 @@ enum qsgp_message_type {
 	QSGP_RESERVE_REQUEST = 0x0001,
 	QSGP_RELEASE_REQUEST = 0x0002,
 	QSGP_EVALUATE_REQUEST = 0x0003,
+	QSGP_GET_RESERVATIONS_REQUEST = 0x0004,
 	QSGP_RESERVE_RESPONSE = 0x8001,
 	QSGP_RELEASE_RESPONSE = 0x8002,
 	QSGP_EVALUATE_RESPONSE = 0x8003,
+	QSGP_GET_RESERVATIONS_RESPONSE = 0x8004,
 	QSGP_ERROR_RESPONSE = 0x8fff,
 };
 
@@ -75,6 +77,8 @@ enum qsgp_tlv_type {
 	QSGP_TLV_GATEWAY_ERROR_CODE = 0x001e,
 	QSGP_TLV_SERVICE_RESULT = 0x001f,
 	QSGP_TLV_RELEASE_RESULT = 0x0020,
+	QSGP_TLV_OBSERVED_JOB_ID = 0x0021,
+	QSGP_TLV_RESERVATION = 0x0022,
 };
 
 enum qsgp_workload_kind {
@@ -107,6 +111,9 @@ enum qsgp_gateway_error {
 	QSGP_GATEWAY_ERROR_INTERNAL = 6,
 	QSGP_GATEWAY_ERROR_REQUEST_CONFLICT = 7,
 	QSGP_GATEWAY_ERROR_UNSUPPORTED_VERSION = 8,
+	QSGP_GATEWAY_ERROR_ALLOCATION_NOT_FOUND = 9,
+	QSGP_GATEWAY_ERROR_ALLOCATION_NOT_ACCEPTED = 10,
+	QSGP_GATEWAY_ERROR_ALLOCATION_RELEASED = 11,
 };
 
 struct qsgp_frame {
@@ -202,6 +209,26 @@ struct qsgp_release_response {
 	uint64_t request_id;
 	size_t result_count;
 	struct qsgp_release_result results[QSGP_MAX_SERVICES];
+};
+
+struct qsgp_get_reservations_request {
+	uint64_t request_id;
+	char cluster_name[QSGP_MAX_CLUSTER_NAME + 1U];
+	uint64_t observed_job_id;
+	uid_t job_uid;
+	gid_t job_gid;
+};
+
+struct qsgp_reservation {
+	char service_id[QSGP_MAX_SERVICE_ID + 1U];
+	uint64_t reservation_id;
+};
+
+struct qsgp_get_reservations_response {
+	uint64_t request_id;
+	uint64_t canonical_job_id;
+	size_t reservation_count;
+	struct qsgp_reservation reservations[QSGP_MAX_SERVICES];
 };
 
 struct qsgp_error_response {

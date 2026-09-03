@@ -298,6 +298,27 @@ out:
 #undef ADD_NESTED
 }
 
+static int add_reservation(struct qsgp_builder *builder,
+	const struct qsgp_reservation *reservation)
+{
+	struct qsgp_builder nested;
+	int status;
+
+	status = qsgp_builder_init(&nested, 0);
+	if (status != QSGP_OK)
+		return status;
+	status = qsgp_builder_add_string(&nested, QSGP_TLV_SERVICE_ID,
+		reservation->service_id, QSGP_MAX_SERVICE_ID);
+	if (status == QSGP_OK)
+		status = qsgp_builder_add_u64(&nested,
+			QSGP_TLV_RESERVATION_ID, reservation->reservation_id);
+	if (status == QSGP_OK)
+		status = qsgp_builder_add_tlv(builder, QSGP_TLV_RESERVATION,
+			QSGP_TLV_REQUIRED, nested.data, nested.size);
+	qsgp_builder_destroy(&nested);
+	return status;
+}
+
 #define ADD_FIELD(call) do { \
 	status = (call); \
 	if (status != QSGP_OK) \
@@ -566,6 +587,78 @@ int qsgp_encode_release_response(const struct qsgp_release_response *response,
 		ADD_FIELD(add_release_result(&builder, &response->results[index]));
 	status = qsgp_builder_finish(&builder, QSGP_RELEASE_RESPONSE,
 		correlation_id, frame);
+out:
+	qsgp_builder_destroy(&builder);
+	return status;
+}
+
+int qsgp_encode_get_reservations_request(
+	const struct qsgp_get_reservations_request *request,
+	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	struct qsgp_builder builder;
+	int status;
+
+	if (request == NULL || frame == NULL || request->request_id == 0 ||
+	    request->observed_job_id == 0)
+		return QSGP_ERR_INVALID;
+	memset(frame, 0, sizeof(*frame));
+	status = qsgp_builder_init(&builder, QSGP_HEADER_SIZE);
+	if (status != QSGP_OK)
+		return status;
+	ADD_FIELD(qsgp_builder_add_u64(&builder, QSGP_TLV_REQUEST_ID,
+		request->request_id));
+	ADD_FIELD(qsgp_builder_add_string(&builder, QSGP_TLV_CLUSTER_NAME,
+		request->cluster_name, QSGP_MAX_CLUSTER_NAME));
+	ADD_FIELD(qsgp_builder_add_u64(&builder, QSGP_TLV_OBSERVED_JOB_ID,
+		request->observed_job_id));
+	ADD_FIELD(qsgp_builder_add_u32(&builder, QSGP_TLV_JOB_UID,
+		(uint32_t)request->job_uid));
+	ADD_FIELD(qsgp_builder_add_u32(&builder, QSGP_TLV_JOB_GID,
+		(uint32_t)request->job_gid));
+	status = qsgp_builder_finish(&builder,
+		QSGP_GET_RESERVATIONS_REQUEST, correlation_id, frame);
+out:
+	qsgp_builder_destroy(&builder);
+	return status;
+}
+
+int qsgp_encode_get_reservations_response(
+	const struct qsgp_get_reservations_response *response,
+	uint64_t correlation_id, struct qsgp_frame *frame)
+{
+	struct qsgp_builder builder;
+	size_t index;
+	size_t other;
+	int status;
+
+	if (response == NULL || frame == NULL || response->request_id == 0 ||
+	    response->canonical_job_id == 0 || response->reservation_count == 0 ||
+	    response->reservation_count > QSGP_MAX_SERVICES)
+		return QSGP_ERR_INVALID;
+	for (index = 0; index < response->reservation_count; index++) {
+		if (response->reservations[index].service_id[0] == '\0' ||
+		    response->reservations[index].reservation_id == 0)
+			return QSGP_ERR_INVALID;
+		for (other = 0; other < index; other++) {
+			if (strcmp(response->reservations[index].service_id,
+				response->reservations[other].service_id) == 0)
+				return QSGP_ERR_CONFLICT;
+		}
+	}
+	memset(frame, 0, sizeof(*frame));
+	status = qsgp_builder_init(&builder, QSGP_HEADER_SIZE);
+	if (status != QSGP_OK)
+		return status;
+	ADD_FIELD(qsgp_builder_add_u64(&builder, QSGP_TLV_REQUEST_ID,
+		response->request_id));
+	ADD_FIELD(qsgp_builder_add_u64(&builder, QSGP_TLV_CANONICAL_JOB_ID,
+		response->canonical_job_id));
+	for (index = 0; index < response->reservation_count; index++)
+		ADD_FIELD(add_reservation(&builder,
+			&response->reservations[index]));
+	status = qsgp_builder_finish(&builder,
+		QSGP_GET_RESERVATIONS_RESPONSE, correlation_id, frame);
 out:
 	qsgp_builder_destroy(&builder);
 	return status;

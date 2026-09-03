@@ -32,9 +32,11 @@ class MessageType(enum.IntEnum):
     RESERVE_REQUEST = 0x0001
     RELEASE_REQUEST = 0x0002
     EVALUATE_REQUEST = 0x0003
+    GET_RESERVATIONS_REQUEST = 0x0004
     RESERVE_RESPONSE = 0x8001
     RELEASE_RESPONSE = 0x8002
     EVALUATE_RESPONSE = 0x8003
+    GET_RESERVATIONS_RESPONSE = 0x8004
     ERROR_RESPONSE = 0x8FFF
 
 
@@ -71,6 +73,8 @@ class Field(enum.IntEnum):
     GATEWAY_ERROR_CODE = 0x001E
     SERVICE_RESULT = 0x001F
     RELEASE_RESULT = 0x0020
+    OBSERVED_JOB_ID = 0x0021
+    RESERVATION = 0x0022
 
 
 class WorkloadKind(enum.IntEnum):
@@ -103,6 +107,9 @@ class GatewayError(enum.IntEnum):
     INTERNAL = 6
     REQUEST_CONFLICT = 7
     UNSUPPORTED_VERSION = 8
+    ALLOCATION_NOT_FOUND = 9
+    ALLOCATION_NOT_ACCEPTED = 10
+    ALLOCATION_RELEASED = 11
 
 
 @dataclasses.dataclass(frozen=True)
@@ -192,6 +199,28 @@ class ReleaseResult:
 class ReleaseResponse:
     request_id: int
     results: tuple[ReleaseResult, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class GetReservationsRequest:
+    request_id: int
+    cluster_name: str
+    observed_job_id: int
+    job_uid: int
+    job_gid: int
+
+
+@dataclasses.dataclass(frozen=True)
+class Reservation:
+    service_id: str
+    reservation_id: int
+
+
+@dataclasses.dataclass(frozen=True)
+class GetReservationsResponse:
+    request_id: int
+    canonical_job_id: int
+    reservations: tuple[Reservation, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -748,6 +777,58 @@ def decode_release_request(frame: bytes) -> tuple[Header, ReleaseRequest]:
     return header, request
 
 
+def encode_get_reservations_request(
+    request: GetReservationsRequest, correlation_id: int
+) -> bytes:
+    _uint(request.request_id, 64, "request_id", nonzero=True)
+    _string(request.cluster_name, MAX_CLUSTER_NAME, "cluster_name")
+    _uint(request.observed_job_id, 64, "observed_job_id", nonzero=True)
+    _uint(request.job_uid, 32, "job_uid")
+    _uint(request.job_gid, 32, "job_gid")
+    payload = b"".join(
+        (
+            _u64(Field.REQUEST_ID, request.request_id),
+            _text(Field.CLUSTER_NAME, request.cluster_name, MAX_CLUSTER_NAME),
+            _u64(Field.OBSERVED_JOB_ID, request.observed_job_id),
+            _u32(Field.JOB_UID, request.job_uid),
+            _u32(Field.JOB_GID, request.job_gid),
+        )
+    )
+    return _frame(MessageType.GET_RESERVATIONS_REQUEST, correlation_id, payload)
+
+
+def decode_get_reservations_request(
+    frame: bytes,
+) -> tuple[Header, GetReservationsRequest]:
+    header = decode_header(frame)
+    if header.message_type != MessageType.GET_RESERVATIONS_REQUEST:
+        raise ProtocolError("expected get-reservations request")
+    values, repeated = _collect(frame[HEADER_SIZE:], set())
+    allowed = {
+        Field.REQUEST_ID,
+        Field.CLUSTER_NAME,
+        Field.OBSERVED_JOB_ID,
+        Field.JOB_UID,
+        Field.JOB_GID,
+    }
+    if repeated or set(values) != allowed:
+        raise ProtocolError("get-reservations request fields are invalid")
+    request = GetReservationsRequest(
+        request_id=_decode_u64(values[Field.REQUEST_ID], "request_id"),
+        cluster_name=_decode_text(
+            values[Field.CLUSTER_NAME], MAX_CLUSTER_NAME, "cluster_name"
+        ),
+        observed_job_id=_decode_u64(
+            values[Field.OBSERVED_JOB_ID], "observed_job_id"
+        ),
+        job_uid=_decode_u32(values[Field.JOB_UID], "job_uid"),
+        job_gid=_decode_u32(values[Field.JOB_GID], "job_gid"),
+    )
+    _uint(request.request_id, 64, "request_id", nonzero=True)
+    _uint(request.observed_job_id, 64, "observed_job_id", nonzero=True)
+    return header, request
+
+
 def _encode_release_result(result: ReleaseResult) -> bytes:
     nested = b"".join(
         (
@@ -791,6 +872,77 @@ def encode_release_response(response: ReleaseResponse, correlation_id: int) -> b
     return _frame(MessageType.RELEASE_RESPONSE, correlation_id, payload)
 
 
+def _encode_reservation(reservation: Reservation) -> bytes:
+    _string(reservation.service_id, MAX_SERVICE_ID, "service_id")
+    _uint(reservation.reservation_id, 64, "reservation_id", nonzero=True)
+    nested = _text(Field.SERVICE_ID, reservation.service_id, MAX_SERVICE_ID)
+    nested += _u64(Field.RESERVATION_ID, reservation.reservation_id)
+    return _tlv(Field.RESERVATION, nested)
+
+
+def encode_get_reservations_response(
+    response: GetReservationsResponse, correlation_id: int
+) -> bytes:
+    _uint(response.request_id, 64, "request_id", nonzero=True)
+    _uint(response.canonical_job_id, 64, "canonical_job_id", nonzero=True)
+    if not 0 < len(response.reservations) <= MAX_SERVICES:
+        raise ProtocolError("reservation response count is invalid")
+    services = [item.service_id for item in response.reservations]
+    if len(set(services)) != len(services):
+        raise ProtocolError("reservation response contains duplicate services")
+    payload = _u64(Field.REQUEST_ID, response.request_id)
+    payload += _u64(Field.CANONICAL_JOB_ID, response.canonical_job_id)
+    payload += b"".join(
+        _encode_reservation(item) for item in response.reservations
+    )
+    return _frame(MessageType.GET_RESERVATIONS_RESPONSE, correlation_id, payload)
+
+
+def _decode_reservation(payload: bytes) -> Reservation:
+    values, repeated = _collect(payload, set())
+    if repeated or set(values) != {Field.SERVICE_ID, Field.RESERVATION_ID}:
+        raise ProtocolError("reservation tuple fields are invalid")
+    reservation = Reservation(
+        service_id=_decode_text(
+            values[Field.SERVICE_ID], MAX_SERVICE_ID, "service_id"
+        ),
+        reservation_id=_decode_u64(
+            values[Field.RESERVATION_ID], "reservation_id"
+        ),
+    )
+    _uint(reservation.reservation_id, 64, "reservation_id", nonzero=True)
+    return reservation
+
+
+def decode_get_reservations_response(
+    frame: bytes,
+) -> tuple[Header, GetReservationsResponse]:
+    header = decode_header(frame)
+    if header.message_type != MessageType.GET_RESERVATIONS_RESPONSE:
+        raise ProtocolError("expected get-reservations response")
+    values, repeated = _collect(frame[HEADER_SIZE:], {Field.RESERVATION})
+    if set(values) != {Field.REQUEST_ID, Field.CANONICAL_JOB_ID}:
+        raise ProtocolError("get-reservations response fields are invalid")
+    reservations = tuple(
+        _decode_reservation(item) for item in repeated[Field.RESERVATION]
+    )
+    if not 0 < len(reservations) <= MAX_SERVICES:
+        raise ProtocolError("reservation response count is invalid")
+    services = [item.service_id for item in reservations]
+    if len(set(services)) != len(services):
+        raise ProtocolError("reservation response contains duplicate services")
+    response = GetReservationsResponse(
+        request_id=_decode_u64(values[Field.REQUEST_ID], "request_id"),
+        canonical_job_id=_decode_u64(
+            values[Field.CANONICAL_JOB_ID], "canonical_job_id"
+        ),
+        reservations=reservations,
+    )
+    _uint(response.request_id, 64, "request_id", nonzero=True)
+    _uint(response.canonical_job_id, 64, "canonical_job_id", nonzero=True)
+    return header, response
+
+
 def encode_error_response(response: ErrorResponse, correlation_id: int) -> bytes:
     try:
         GatewayError(response.error_code)
@@ -807,7 +959,10 @@ def encode_error_response(response: ErrorResponse, correlation_id: int) -> bytes
 
 def decode_request(
     frame: bytes,
-) -> tuple[Header, EvaluateRequest | ReserveRequest | ReleaseRequest]:
+) -> tuple[
+    Header,
+    EvaluateRequest | ReserveRequest | ReleaseRequest | GetReservationsRequest,
+]:
     header = decode_header(frame)
     if header.message_type == MessageType.EVALUATE_REQUEST:
         return decode_evaluate_request(frame)
@@ -815,11 +970,19 @@ def decode_request(
         return decode_reserve_request(frame)
     if header.message_type == MessageType.RELEASE_REQUEST:
         return decode_release_request(frame)
+    if header.message_type == MessageType.GET_RESERVATIONS_REQUEST:
+        return decode_get_reservations_request(frame)
     raise ProtocolError("gateway accepts only request message types")
 
 
 def encode_response(
-    response: EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse,
+    response: (
+        EvaluateResponse
+        | ReserveResponse
+        | ReleaseResponse
+        | GetReservationsResponse
+        | ErrorResponse
+    ),
     correlation_id: int,
 ) -> bytes:
     if isinstance(response, EvaluateResponse):
@@ -828,13 +991,21 @@ def encode_response(
         return encode_reserve_response(response, correlation_id)
     if isinstance(response, ReleaseResponse):
         return encode_release_response(response, correlation_id)
+    if isinstance(response, GetReservationsResponse):
+        return encode_get_reservations_response(response, correlation_id)
     if isinstance(response, ErrorResponse):
         return encode_error_response(response, correlation_id)
     raise TypeError("unsupported QSGP response type")
 
 
 def response_to_dict(
-    response: EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse,
+    response: (
+        EvaluateResponse
+        | ReserveResponse
+        | ReleaseResponse
+        | GetReservationsResponse
+        | ErrorResponse
+    ),
 ) -> dict:
     value = dataclasses.asdict(response)
     value["response_type"] = type(response).__name__
@@ -853,7 +1024,13 @@ def _enum_values(value):
 
 def response_from_dict(
     value: dict,
-) -> EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse:
+) -> (
+    EvaluateResponse
+    | ReserveResponse
+    | ReleaseResponse
+    | GetReservationsResponse
+    | ErrorResponse
+):
     response_type = value.get("response_type")
     if response_type in {"EvaluateResponse", "ReserveResponse"}:
         response_class = (
@@ -894,6 +1071,18 @@ def response_from_dict(
                     diagnostic=item.get("diagnostic"),
                 )
                 for item in value["results"]
+            ),
+        )
+    if response_type == "GetReservationsResponse":
+        return GetReservationsResponse(
+            request_id=value["request_id"],
+            canonical_job_id=value["canonical_job_id"],
+            reservations=tuple(
+                Reservation(
+                    service_id=item["service_id"],
+                    reservation_id=item["reservation_id"],
+                )
+                for item in value["reservations"]
             ),
         )
     if response_type == "ErrorResponse":

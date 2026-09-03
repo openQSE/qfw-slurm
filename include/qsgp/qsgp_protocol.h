@@ -38,6 +38,20 @@ int qsgp_encode_release_response(const struct qsgp_release_response *response,
 int qsgp_decode_release_response(const uint8_t *data, size_t size,
 	struct qsgp_header *header, struct qsgp_release_response *response);
 
+int qsgp_encode_get_reservations_request(
+	const struct qsgp_get_reservations_request *request,
+	uint64_t correlation_id, struct qsgp_frame *frame);
+int qsgp_decode_get_reservations_request(const uint8_t *data, size_t size,
+	struct qsgp_header *header,
+	struct qsgp_get_reservations_request *request);
+
+int qsgp_encode_get_reservations_response(
+	const struct qsgp_get_reservations_response *response,
+	uint64_t correlation_id, struct qsgp_frame *frame);
+int qsgp_decode_get_reservations_response(const uint8_t *data, size_t size,
+	struct qsgp_header *header,
+	struct qsgp_get_reservations_response *response);
+
 int qsgp_encode_error_response(const struct qsgp_error_response *response,
 	uint64_t correlation_id, struct qsgp_frame *frame);
 int qsgp_decode_error_response(const uint8_t *data, size_t size,

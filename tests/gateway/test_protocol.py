@@ -14,8 +14,11 @@ from qfw_slurm_gateway.protocol import (
     EvaluateResponse,
     Field,
     GatewayError,
+    GetReservationsRequest,
+    GetReservationsResponse,
     ProtocolError,
     ReleaseRequest,
+    Reservation,
     ReserveRequest,
     ReserveResponse,
     ServiceResult,
@@ -23,9 +26,12 @@ from qfw_slurm_gateway.protocol import (
     WorkloadKind,
     bounded_diagnostic,
     decode_request,
+    decode_get_reservations_response,
     encode_evaluate_request,
     encode_evaluate_response,
     encode_error_response,
+    encode_get_reservations_request,
+    encode_get_reservations_response,
     encode_release_request,
     encode_reserve_request,
     encode_reserve_response,
@@ -90,6 +96,28 @@ def test_release_request_round_trip() -> None:
     header, decoded = decode_request(encode_release_request(request, 100))
     assert header.correlation_id == 100
     assert decoded == request
+
+
+def test_get_reservations_round_trip() -> None:
+    request = GetReservationsRequest(6, "test-cluster", 43, 1001, 1001)
+    header, decoded = decode_request(
+        encode_get_reservations_request(request, 101)
+    )
+    assert header.correlation_id == 101
+    assert decoded == request
+
+    response = GetReservationsResponse(
+        request_id=6,
+        canonical_job_id=42,
+        reservations=(
+            Reservation("iqm-ornl-20q", 41),
+            Reservation("nwqsim-site", (1 << 64) - 1),
+        ),
+    )
+    frame = encode_get_reservations_response(response, 102)
+    response_header, decoded_response = decode_get_reservations_response(frame)
+    assert response_header.correlation_id == 102
+    assert decoded_response == response
 
 
 def test_reserve_retrieval_request_round_trip() -> None:
@@ -191,3 +219,19 @@ def test_native_python_interoperability(tmp_path) -> None:
     python_frame = tmp_path / "python.qsgp"
     python_frame.write_bytes(encode_reserve_request(reserve_request(), 99))
     subprocess.run([executable, "decode", str(python_frame)], check=True)
+
+    get_frame = subprocess.run(
+        [executable, "encode-get"], check=True, capture_output=True
+    ).stdout
+    _header, decoded_get = decode_request(get_frame)
+    assert decoded_get == GetReservationsRequest(
+        (1 << 63) + 2, "test-cluster", 43, 1001, 1001
+    )
+
+    python_get_frame = tmp_path / "python-get.qsgp"
+    python_get_frame.write_bytes(
+        encode_get_reservations_request(decoded_get, 100)
+    )
+    subprocess.run(
+        [executable, "decode-get", str(python_get_frame)], check=True
+    )

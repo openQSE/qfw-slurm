@@ -281,6 +281,60 @@ static int test_release_messages(void)
 	return 0;
 }
 
+static int test_get_reservations_messages(void)
+{
+	struct qsgp_get_reservations_request request = {
+		.request_id = 211,
+		.cluster_name = "qfw-cluster",
+		.observed_job_id = 1235,
+		.job_uid = 1101,
+		.job_gid = 1101,
+	};
+	struct qsgp_get_reservations_request decoded_request;
+	struct qsgp_get_reservations_response response = {
+		.request_id = 211,
+		.canonical_job_id = 1234,
+		.reservation_count = 2,
+		.reservations = {
+			{
+				.service_id = "iqm-ornl-20q",
+				.reservation_id = 41,
+			},
+			{
+				.service_id = "nwqsim-site",
+				.reservation_id = UINT64_MAX,
+			},
+		},
+	};
+	struct qsgp_get_reservations_response decoded_response;
+	struct qsgp_header header;
+	struct qsgp_frame frame;
+
+	CHECK(qsgp_encode_get_reservations_request(&request, 212, &frame) ==
+		QSGP_OK);
+	CHECK(qsgp_decode_get_reservations_request(frame.data, frame.size,
+		&header, &decoded_request) == QSGP_OK);
+	CHECK(header.message_type == QSGP_GET_RESERVATIONS_REQUEST);
+	CHECK(decoded_request.observed_job_id == 1235);
+	CHECK(decoded_request.job_uid == 1101);
+	qsgp_frame_destroy(&frame);
+
+	CHECK(qsgp_encode_get_reservations_response(&response, 213, &frame) ==
+		QSGP_OK);
+	CHECK(qsgp_decode_get_reservations_response(frame.data, frame.size,
+		&header, &decoded_response) == QSGP_OK);
+	CHECK(header.message_type == QSGP_GET_RESERVATIONS_RESPONSE);
+	CHECK(decoded_response.canonical_job_id == 1234);
+	CHECK(decoded_response.reservation_count == 2);
+	CHECK(decoded_response.reservations[1].reservation_id == UINT64_MAX);
+	qsgp_frame_destroy(&frame);
+
+	response.reservations[1].reservation_id = 0;
+	CHECK(qsgp_encode_get_reservations_response(&response, 214, &frame) ==
+		QSGP_ERR_INVALID);
+	return 0;
+}
+
 static int test_error_response(void)
 {
 	struct qsgp_error_response response = {
@@ -364,6 +418,7 @@ int main(void)
 	CHECK(test_reserve_response() == 0);
 	CHECK(test_nonaccepted_response() == 0);
 	CHECK(test_release_messages() == 0);
+	CHECK(test_get_reservations_messages() == 0);
 	CHECK(test_error_response() == 0);
 	CHECK(test_malformed_frames() == 0);
 	CHECK(test_credential_framing() == 0);
