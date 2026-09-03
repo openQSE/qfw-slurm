@@ -15,6 +15,7 @@ from qfw_slurm_gateway.defw_client import QFwAdapterError, QPMBinding
 from qfw_slurm_gateway.journal import Journal
 from qfw_slurm_gateway.protocol import (
     AdmissionDecision,
+    GetReservationsRequest,
     ReserveRequest,
     ServiceResult,
 )
@@ -70,6 +71,19 @@ class DeterministicVerifier:
         if expected_uid is not None and expected_uid != self.uid:
             raise SlurmVerificationError("deterministic journal owner mismatch")
         return self._job("COMPLETING")
+
+    def verify_lookup(
+        self, request: GetReservationsRequest, sender_uid: int
+    ) -> VerifiedJob:
+        if (
+            request.cluster_name != self.cluster
+            or request.observed_job_id != self.job_id
+            or request.job_uid != self.uid
+            or request.job_gid != self.gid
+            or sender_uid not in {0, self.uid}
+        ):
+            raise SlurmVerificationError("deterministic lookup identity mismatch")
+        return self._job("RUNNING")
 
 
 class DeterministicAdapter:

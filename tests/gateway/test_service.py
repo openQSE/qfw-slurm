@@ -10,6 +10,8 @@ from qfw_slurm_gateway.protocol import (
     EvaluateRequest,
     EvaluateResponse,
     GatewayError,
+    GetReservationsRequest,
+    GetReservationsResponse,
     ReleaseRequest,
     ReleaseResponse,
     ReservationState,
@@ -51,6 +53,22 @@ class FakeVerifier:
             "normal",
             1,
             "COMPLETING",
+        )
+
+    def verify_lookup(self, request, sender_uid):
+        if sender_uid != request.job_uid:
+            raise AssertionError("unexpected sender")
+        canonical = 100 if request.observed_job_id in {100, 101} else request.observed_job_id
+        return VerifiedJob(
+            request.cluster_name,
+            canonical,
+            request.job_uid,
+            request.job_gid,
+            "user-a",
+            "account",
+            "normal",
+            1,
+            "RUNNING",
         )
 
 
@@ -176,6 +194,10 @@ def request(request_id=1):
 
 def evaluate_request(request_id=1):
     return EvaluateRequest(**request(request_id).__dict__)
+
+
+def lookup_request(request_id=9, job_id=100):
+    return GetReservationsRequest(request_id, "cluster", job_id, 1001, 1001)
 
 
 def single_service_request(job_id, request_id, evaluate=False):
@@ -317,6 +339,51 @@ async def _atomic_reserve_replay_and_release(tmp_path) -> None:
         ReservationState.RELEASED
     }
     assert len(adapter.releases) == 2
+    journal.close()
+
+
+def test_lookup_reads_accepted_journal_without_qpm_calls(tmp_path) -> None:
+    asyncio.run(_lookup_reads_accepted_journal_without_qpm_calls(tmp_path))
+
+
+async def _lookup_reads_accepted_journal_without_qpm_calls(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+    assert isinstance(await service.handle(request(), 1001), ReserveResponse)
+    calls = (list(adapter.reserves), list(adapter.evaluates), list(adapter.releases))
+
+    first = await service.handle(lookup_request(), 1001)
+    repeated = await service.handle(lookup_request(10, 101), 1001)
+
+    assert isinstance(first, GetReservationsResponse)
+    assert first.canonical_job_id == 100
+    assert [(item.service_id, item.reservation_id) for item in first.reservations] == [
+        ("svc-a", 40),
+        ("svc-b", 41),
+    ]
+    assert repeated.reservations == first.reservations
+    assert calls == (adapter.reserves, adapter.evaluates, adapter.releases)
+    journal.close()
+
+
+def test_lookup_rejects_missing_and_released_allocations(tmp_path) -> None:
+    asyncio.run(_lookup_rejects_missing_and_released_allocations(tmp_path))
+
+
+async def _lookup_rejects_missing_and_released_allocations(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    service = GatewayService(journal, FakeVerifier(), FakeAdapter())
+    missing = await service.handle(lookup_request(), 1001)
+    assert missing.error_code == GatewayError.ALLOCATION_NOT_FOUND
+
+    assert isinstance(await service.handle(request(), 1001), ReserveResponse)
+    assert isinstance(
+        await service.handle(ReleaseRequest(2, "cluster", 100, 3), 1001),
+        ReleaseResponse,
+    )
+    released = await service.handle(lookup_request(), 1001)
+    assert released.error_code == GatewayError.ALLOCATION_RELEASED
     journal.close()
 
 

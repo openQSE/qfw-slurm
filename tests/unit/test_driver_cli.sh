@@ -4,7 +4,8 @@ set -eu
 
 driver=$1
 
-"${driver}" --help | grep -q 'evaluate|reserve|release|lifecycle'
+"${driver}" --help | grep -q \
+	'evaluate|reserve|get-reservations|release|lifecycle'
 
 if "${driver}" reserve >/dev/null 2>&1; then
 	echo "driver accepted an incomplete reserve command" >&2

@@ -105,7 +105,11 @@ class GatewayServer:
                     "correlation_id=%s sender_uid=%s response=%s duration_ns=%s",
                     type(request).__name__,
                     request.cluster_name,
-                    request.canonical_job_id,
+                    getattr(
+                        request,
+                        "canonical_job_id",
+                        getattr(request, "observed_job_id", 0),
+                    ),
                     request.request_id,
                     header.correlation_id,
                     identity.uid,

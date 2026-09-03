@@ -114,6 +114,15 @@ struct qfw_release_operation_result {
 	char diagnostic[QFW_PLUGIN_MAX_ERROR + 1U];
 };
 
+struct qfw_get_reservations_operation_result {
+	uint32_t state;
+	struct qsgp_get_reservations_request request;
+	struct qsgp_get_reservations_response response;
+	struct qfw_gateway_call_error call_error;
+	char reservations_json[QFW_RESERVATIONS_ENV_SIZE];
+	char diagnostic[QFW_PLUGIN_MAX_ERROR + 1U];
+};
+
 struct qfw_quantum_options {
 	bool active;
 	char qpu_names[QSGP_MAX_SERVICES]
@@ -148,6 +157,9 @@ int qfw_build_reserve_request(const struct qfw_plugin_config *config,
 	size_t error_size);
 int qfw_reservations_json(const struct qsgp_reserve_response *response,
 	char *output, size_t output_size);
+int qfw_lookup_reservations_json(
+	const struct qsgp_get_reservations_response *response,
+	char *output, size_t output_size);
 
 int qfw_gateway_client_init(struct qfw_gateway_client *client,
 	const struct qfw_plugin_config *config, char *error, size_t error_size);
@@ -167,6 +179,10 @@ int qfw_gateway_release(const struct qfw_gateway_client *client,
 	const struct qsgp_release_request *request,
 	struct qsgp_release_response *response,
 	struct qfw_gateway_call_error *error);
+int qfw_gateway_get_reservations(const struct qfw_gateway_client *client,
+	const struct qsgp_get_reservations_request *request,
+	struct qsgp_get_reservations_response *response,
+	struct qfw_gateway_call_error *error);
 
 int qfw_reserve_operation(const struct qfw_gateway_client *client,
 	const struct qfw_plugin_config *config,
@@ -181,6 +197,10 @@ int qfw_evaluate_operation(const struct qfw_gateway_client *client,
 int qfw_release_operation(const struct qfw_gateway_client *client,
 	const struct qfw_allocation_context *allocation, uint32_t reason,
 	struct qfw_release_operation_result *result);
+int qfw_get_reservations_operation(
+	const struct qfw_gateway_client *client, const char *cluster_name,
+	uint64_t observed_job_id, uid_t job_uid, gid_t job_gid,
+	struct qfw_get_reservations_operation_result *result);
 
 int qfw_reserve_response_process(
 	const struct qsgp_reserve_request *request,

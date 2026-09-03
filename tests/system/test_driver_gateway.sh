@@ -179,6 +179,10 @@ first_export=$(printf '%s\n' "${first}" | grep '^export QFW_RESERVATIONS=')
 second_export=$(printf '%s\n' "${second}" | grep '^export QFW_RESERVATIONS=')
 test "${first_export}" = "${second_export}"
 printf '%s\n' "${first_export}" | grep -q 'nwqsim-site.*41'
+looked_up=$(driver_common get-reservations)
+lookup_export=$(printf '%s\n' "${looked_up}" | \
+	grep '^export QFW_RESERVATIONS=')
+test "${first_export}" = "${lookup_export}"
 released=$(driver_common release)
 printf '%s\n' "${released}" | grep -q 'state=released'
 "${python}" - "${journal}" <<'PY'

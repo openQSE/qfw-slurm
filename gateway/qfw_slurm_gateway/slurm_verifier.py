@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-from .protocol import ReleaseRequest, ReserveRequest
+from .protocol import GetReservationsRequest, ReleaseRequest, ReserveRequest
 
 
 class SlurmVerificationError(RuntimeError):
@@ -105,7 +105,7 @@ class SlurmVerifier:
             raise SlurmVerificationError(
                 f"Slurm job state {job.state!r} cannot reserve QPMs"
             )
-        return job
+        return dataclasses.replace(job, cluster_name=self.cluster_name)
 
     def verify_release(
         self,
@@ -126,12 +126,64 @@ class SlurmVerifier:
             )
         return job
 
-    def _load(
-        self,
-        job_id: int,
-        hetero_job_id: int | None = None,
-        hetero_component: int | None = None,
+    def verify_lookup(
+        self, request: GetReservationsRequest, sender_uid: int
     ) -> VerifiedJob:
+        if request.cluster_name != self.cluster_name:
+            raise SlurmVerificationError("request names another Slurm cluster")
+        jobs, observed = self._query(request.observed_job_id)
+        canonical_job_id = self._canonical_job_id(observed)
+        if canonical_job_id == request.observed_job_id:
+            canonical = observed
+        else:
+            canonical = next(
+                (
+                    item
+                    for item in jobs
+                    if _number(item.get("job_id"), "job ID")
+                    == canonical_job_id
+                ),
+                None,
+            )
+            if canonical is None:
+                _jobs, canonical = self._query(canonical_job_id)
+        job = self._verified_job(canonical, canonical_job_id)
+        observed_uid = _number(
+            observed.get("user_id", observed.get("user_id_number")), "UID"
+        )
+        observed_gid = _number(
+            observed.get("group_id", observed.get("group_id_number")), "GID"
+        )
+        if (observed_uid, observed_gid) != (job.uid, job.gid):
+            raise SlurmVerificationError(
+                "heterogeneous component owner differs from allocation"
+            )
+        if job.uid != request.job_uid or job.gid != request.job_gid:
+            raise SlurmVerificationError("request identity differs from Slurm")
+        if not self._sender_is_trusted(sender_uid, job.uid):
+            raise SlurmVerificationError(
+                "MUNGE identity cannot retrieve reservations for this job"
+            )
+        if job.state not in self._reserve_states:
+            raise SlurmVerificationError(
+                f"Slurm job state {job.state!r} has no active reservation context"
+            )
+        return dataclasses.replace(job, cluster_name=self.cluster_name)
+
+    @staticmethod
+    def _canonical_job_id(record: dict[str, Any]) -> int:
+        value = record.get("het_job_id")
+        if value is None:
+            return _number(record.get("job_id"), "job ID")
+        try:
+            candidate = _number(value, "heterogeneous job ID")
+        except SlurmVerificationError:
+            return _number(record.get("job_id"), "job ID")
+        if candidate in {0, 4294967294, 4294967295}:
+            return _number(record.get("job_id"), "job ID")
+        return candidate
+
+    def _query(self, job_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
             result = self._runner(
                 [self.command, "--json", "show", "job", str(job_id)],
@@ -157,16 +209,12 @@ class SlurmVerifier:
             raise SlurmVerificationError("scontrol returned invalid JSON") from error
         except StopIteration as error:
             raise SlurmVerificationError(
-                "scontrol response lacks the canonical job"
+                "scontrol response lacks the requested job"
             ) from error
-        if (hetero_job_id is None) != (hetero_component is None):
-            raise SlurmVerificationError(
-                "heterogeneous request metadata is incomplete"
-            )
-        if hetero_job_id is not None:
-            self._verify_heterogeneous_component(
-                jobs, job_id, hetero_job_id, hetero_component
-            )
+        return jobs, record
+
+    @staticmethod
+    def _verified_job(record: dict[str, Any], job_id: int) -> VerifiedJob:
         uid = _number(record.get("user_id", record.get("user_id_number")), "UID")
         gid = _number(record.get("group_id", record.get("group_id_number")), "GID")
         state = (_text(record.get("job_state", record.get("state"))) or "").upper()
@@ -177,7 +225,7 @@ class SlurmVerifier:
         except KeyError:
             username = str(uid)
         return VerifiedJob(
-            cluster_name=self.cluster_name,
+            cluster_name="",
             canonical_job_id=job_id,
             uid=uid,
             gid=gid,
@@ -188,6 +236,25 @@ class SlurmVerifier:
             if record.get("priority") is not None
             else None,
             state=state,
+        )
+
+    def _load(
+        self,
+        job_id: int,
+        hetero_job_id: int | None = None,
+        hetero_component: int | None = None,
+    ) -> VerifiedJob:
+        jobs, record = self._query(job_id)
+        if (hetero_job_id is None) != (hetero_component is None):
+            raise SlurmVerificationError(
+                "heterogeneous request metadata is incomplete"
+            )
+        if hetero_job_id is not None:
+            self._verify_heterogeneous_component(
+                jobs, job_id, hetero_job_id, hetero_component
+            )
+        return dataclasses.replace(
+            self._verified_job(record, job_id), cluster_name=self.cluster_name
         )
 
     def _verify_heterogeneous_component(

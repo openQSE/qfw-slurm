@@ -120,3 +120,61 @@ int qfw_reservations_json(const struct qsgp_reserve_response *response,
 	}
 	return append_text(output, output_size, &offset, "]");
 }
+
+int qfw_lookup_reservations_json(
+	const struct qsgp_get_reservations_response *response,
+	char *output, size_t output_size)
+{
+	size_t indices[QSGP_MAX_SERVICES];
+	size_t offset = 0;
+	size_t index;
+
+	if (response == NULL || output == NULL || output_size < 3U ||
+	    response->canonical_job_id == 0 || response->reservation_count == 0 ||
+	    response->reservation_count > QSGP_MAX_SERVICES)
+		return -1;
+	output[0] = '\0';
+	for (index = 0; index < response->reservation_count; index++) {
+		size_t position = index;
+
+		if (response->reservations[index].service_id[0] == '\0' ||
+		    response->reservations[index].reservation_id == 0)
+			return -1;
+		indices[index] = index;
+		while (position > 0 && strcmp(
+			response->reservations[indices[position - 1U]].service_id,
+			response->reservations[indices[position]].service_id) > 0) {
+			size_t temporary = indices[position - 1U];
+
+			indices[position - 1U] = indices[position];
+			indices[position] = temporary;
+			position--;
+		}
+	}
+	for (index = 1; index < response->reservation_count; index++) {
+		if (strcmp(response->reservations[indices[index - 1U]].service_id,
+			response->reservations[indices[index]].service_id) == 0)
+			return -1;
+	}
+	if (append_text(output, output_size, &offset, "[") != 0)
+		return -1;
+	for (index = 0; index < response->reservation_count; index++) {
+		const struct qsgp_reservation *reservation =
+			&response->reservations[indices[index]];
+		char reservation_id[32];
+
+		if (index != 0 && append_text(output, output_size, &offset, ",") != 0)
+			return -1;
+		if (append_text(output, output_size, &offset, "[") != 0 ||
+		    append_json_string(output, output_size, &offset,
+			reservation->service_id) != 0 ||
+		    append_text(output, output_size, &offset, ",") != 0)
+			return -1;
+		(void)snprintf(reservation_id, sizeof(reservation_id),
+			"\"%" PRIu64 "\"", reservation->reservation_id);
+		if (append_text(output, output_size, &offset, reservation_id) != 0 ||
+		    append_text(output, output_size, &offset, "]") != 0)
+			return -1;
+	}
+	return append_text(output, output_size, &offset, "]");
+}

@@ -18,6 +18,7 @@ enum driver_command {
 	DRIVER_COMMAND_EVALUATE,
 	DRIVER_COMMAND_RESERVE,
 	DRIVER_COMMAND_RELEASE,
+	DRIVER_COMMAND_GET_RESERVATIONS,
 	DRIVER_COMMAND_LIFECYCLE,
 };
 
@@ -61,7 +62,7 @@ static void usage(FILE *stream)
 {
 	(void)fprintf(stream,
 		"usage: qfw-slurm-driver "
-		"<evaluate|reserve|release|lifecycle> [options]\n"
+		"<evaluate|reserve|get-reservations|release|lifecycle> [options]\n"
 		"  --config PATH                 protected plugin config\n"
 		"  --cluster NAME                Slurm cluster name\n"
 		"  --job-id ID                   canonical Slurm job ID\n"
@@ -147,6 +148,8 @@ static int command_from_name(const char *name, enum driver_command *command)
 		*command = DRIVER_COMMAND_RESERVE;
 	else if (strcmp(name, "release") == 0)
 		*command = DRIVER_COMMAND_RELEASE;
+	else if (strcmp(name, "get-reservations") == 0)
+		*command = DRIVER_COMMAND_GET_RESERVATIONS;
 	else if (strcmp(name, "lifecycle") == 0)
 		*command = DRIVER_COMMAND_LIFECYCLE;
 	else
@@ -340,11 +343,15 @@ static int parse_options(int argc, char **argv,
 	}
 	if (optind != argc || options->config_path == NULL ||
 	    !options->has_cluster || !options->has_job_id ||
-	    !options->has_uid || !options->has_gid || !options->has_epoch ||
+	    !options->has_uid || !options->has_gid ||
 	    options->has_hetero_job != options->has_hetero_component)
 		return -1;
+	if (options->command != DRIVER_COMMAND_GET_RESERVATIONS &&
+	    !options->has_epoch)
+		return -1;
 	options->allocation.has_hetero = options->has_hetero_job;
-	if (options->command != DRIVER_COMMAND_RELEASE) {
+	if (options->command != DRIVER_COMMAND_RELEASE &&
+	    options->command != DRIVER_COMMAND_GET_RESERVATIONS) {
 		char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
 
 		if (!options->has_walltime || !options->quantum.active ||
@@ -471,6 +478,31 @@ static void print_release(const struct driver_options *options,
 	}
 }
 
+static void print_get_reservations(const struct driver_options *options,
+	const struct qfw_get_reservations_operation_result *result)
+{
+	if (options->json) {
+		(void)printf("{\"schema\":\"qfw-slurm-driver-v1\","
+			"\"operation\":\"get-reservations\",\"request_id\":%"
+			PRIu64 ",\"state\":", result->request.request_id);
+		print_json_string(operation_name(result->state));
+		(void)printf(",\"canonical_job_id\":%" PRIu64
+			",\"diagnostic\":", result->response.canonical_job_id);
+		print_json_string(result->diagnostic);
+		(void)printf(",\"reservations\":%s}\n",
+			result->state == QFW_OPERATION_ACCEPTED ?
+			result->reservations_json : "null");
+	} else {
+		(void)printf("get-reservations request=%" PRIu64 " state=%s\n",
+			result->request.request_id, operation_name(result->state));
+		if (result->diagnostic[0] != '\0')
+			(void)printf("diagnostic: %s\n", result->diagnostic);
+		if (result->state == QFW_OPERATION_ACCEPTED)
+			(void)printf("export QFW_RESERVATIONS='%s'\n",
+				result->reservations_json);
+	}
+}
+
 static int reserve_exit_status(
 	const struct qfw_reserve_operation_result *result)
 {
@@ -510,6 +542,23 @@ static int release_exit_status(
 	return DRIVER_EXIT_RELEASE;
 }
 
+static int lookup_exit_status(
+	const struct qfw_get_reservations_operation_result *result)
+{
+	if (result->state == QFW_OPERATION_ACCEPTED)
+		return DRIVER_EXIT_OK;
+	if (result->state == QFW_OPERATION_GATEWAY_ERROR)
+		return DRIVER_EXIT_GATEWAY;
+	if (result->state == QFW_OPERATION_RESPONSE_ERROR)
+		return DRIVER_EXIT_RESPONSE;
+	if (result->state == QFW_OPERATION_CLIENT_ERROR &&
+	    result->call_error.source == QFW_GATEWAY_ERROR_AUTHENTICATION)
+		return DRIVER_EXIT_AUTHENTICATION;
+	if (result->state == QFW_OPERATION_INVALID)
+		return DRIVER_EXIT_ARGUMENT;
+	return DRIVER_EXIT_TRANSPORT;
+}
+
 static void hold_before_release(uint64_t seconds)
 {
 	struct sigaction action = {0};
@@ -534,6 +583,7 @@ int main(int argc, char **argv)
 	struct qfw_gateway_client client;
 	struct qfw_reserve_operation_result reserve_result;
 	struct qfw_release_operation_result release_result;
+	struct qfw_get_reservations_operation_result lookup_result;
 	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
 	int status;
 
@@ -550,6 +600,17 @@ int main(int argc, char **argv)
 		sizeof(error)) != QFW_GATEWAY_OK) {
 		(void)fprintf(stderr, "qfw-slurm-driver: %s\n", error);
 		return DRIVER_EXIT_ARGUMENT;
+	}
+	if (options.command == DRIVER_COMMAND_GET_RESERVATIONS) {
+		(void)qfw_get_reservations_operation(&client,
+			options.allocation.cluster_name,
+			options.allocation.canonical_job_id,
+			options.allocation.job_uid, options.allocation.job_gid,
+			&lookup_result);
+		print_get_reservations(&options, &lookup_result);
+		status = lookup_exit_status(&lookup_result);
+		qfw_gateway_client_destroy(&client);
+		return status;
 	}
 	if (options.command != DRIVER_COMMAND_RELEASE) {
 		if (options.command == DRIVER_COMMAND_EVALUATE)

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from qfw_slurm_gateway.journal import Journal, RequestConflict, ReservationRecord
+from qfw_slurm_gateway.journal import (
+    AllocationNotAccepted,
+    AllocationNotFound,
+    Journal,
+    RequestConflict,
+    ReservationRecord,
+)
 
 
 def test_operation_replay_and_conflict(tmp_path) -> None:
@@ -54,4 +60,30 @@ def test_uint64_values_are_stored_as_decimal_text(tmp_path) -> None:
     record = journal.reservations("cluster", largest)[0]
     assert record.reservation_id == largest
     assert record.qpm_generation == largest
+    journal.close()
+
+
+def test_reservation_context_requires_complete_accepted_set(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    with pytest.raises(AllocationNotFound):
+        journal.reservation_context("cluster", 42, 1000, 1000)
+    journal.begin_allocation(
+        "cluster", 42, 1000, 1000, ("svc",), "x", "workload"
+    )
+    with pytest.raises(AllocationNotAccepted):
+        journal.reservation_context("cluster", 42, 1000, 1000)
+    journal.record_reservation(
+        "cluster",
+        42,
+        ReservationRecord("svc", 9, "runtime", 1, "accepted", "workload"),
+    )
+    journal.complete_allocation("cluster", 42, "accepted", {"unused": True})
+
+    records = journal.reservation_context("cluster", 42, 1000, 1000)
+
+    assert [(item.service_id, item.reservation_id) for item in records] == [
+        ("svc", 9)
+    ]
+    with pytest.raises(RequestConflict):
+        journal.reservation_context("cluster", 42, 1001, 1000)
     journal.close()

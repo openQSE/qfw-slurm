@@ -314,3 +314,49 @@ int qfw_release_operation(const struct qfw_gateway_client *client,
 	return qfw_release_response_process(&result->request,
 		&result->response, result);
 }
+
+int qfw_get_reservations_operation(
+	const struct qfw_gateway_client *client, const char *cluster_name,
+	uint64_t observed_job_id, uid_t job_uid, gid_t job_gid,
+	struct qfw_get_reservations_operation_result *result)
+{
+	int status;
+
+	if (client == NULL || cluster_name == NULL || result == NULL)
+		return -1;
+	memset(result, 0, sizeof(*result));
+	if (*cluster_name == '\0' ||
+	    strlen(cluster_name) > QSGP_MAX_CLUSTER_NAME ||
+	    observed_job_id == 0) {
+		result->state = QFW_OPERATION_INVALID;
+		set_diagnostic(result->diagnostic, sizeof(result->diagnostic),
+			"reservation lookup identity is invalid");
+		return 0;
+	}
+	result->request.request_id = qfw_request_id(cluster_name,
+		observed_job_id, 0, QSGP_GET_RESERVATIONS_REQUEST);
+	(void)snprintf(result->request.cluster_name,
+		sizeof(result->request.cluster_name), "%s", cluster_name);
+	result->request.observed_job_id = observed_job_id;
+	result->request.job_uid = job_uid;
+	result->request.job_gid = job_gid;
+	status = qfw_gateway_get_reservations(client, &result->request,
+		&result->response, &result->call_error);
+	if (status != QFW_GATEWAY_OK) {
+		map_call_failure(&result->state, result->diagnostic,
+			sizeof(result->diagnostic), &result->call_error);
+		return 0;
+	}
+	if (result->response.request_id != result->request.request_id ||
+	    result->response.canonical_job_id == 0 ||
+	    qfw_lookup_reservations_json(&result->response,
+		result->reservations_json,
+		sizeof(result->reservations_json)) != 0) {
+		result->state = QFW_OPERATION_RESPONSE_ERROR;
+		set_diagnostic(result->diagnostic, sizeof(result->diagnostic),
+			"gateway returned an invalid reservation set");
+		return 0;
+	}
+	result->state = QFW_OPERATION_ACCEPTED;
+	return 0;
+}

@@ -179,6 +179,9 @@ static int gateway_exchange(const struct qfw_gateway_client *client,
 	else if (expected_response == QSGP_EVALUATE_RESPONSE)
 		status = qsgp_decode_evaluate_response(response_frame,
 			response_frame_size, &header, response);
+	else if (expected_response == QSGP_GET_RESERVATIONS_RESPONSE)
+		status = qsgp_decode_get_reservations_response(response_frame,
+			response_frame_size, &header, response);
 	else
 		status = qsgp_decode_release_response(response_frame,
 			response_frame_size, &header, response);
@@ -262,6 +265,31 @@ int qfw_gateway_release(const struct qfw_gateway_client *client,
 		return fail(error, QFW_GATEWAY_ERROR_LOCAL, status);
 	status = gateway_exchange(client, &frame, correlation,
 		QSGP_RELEASE_RESPONSE, response, error);
+	qsgp_frame_destroy(&frame);
+	return status;
+}
+
+int qfw_gateway_get_reservations(const struct qfw_gateway_client *client,
+	const struct qsgp_get_reservations_request *request,
+	struct qsgp_get_reservations_response *response,
+	struct qfw_gateway_call_error *error)
+{
+	struct qsgp_frame frame;
+	uint64_t correlation;
+	int status;
+
+	if (client == NULL || request == NULL || response == NULL ||
+	    error == NULL)
+		return QSGP_ERR_INVALID;
+	memset(response, 0, sizeof(*response));
+	memset(error, 0, sizeof(*error));
+	correlation = correlation_id(request->request_id);
+	status = qsgp_encode_get_reservations_request(request, correlation,
+		&frame);
+	if (status != QSGP_OK)
+		return fail(error, QFW_GATEWAY_ERROR_LOCAL, status);
+	status = gateway_exchange(client, &frame, correlation,
+		QSGP_GET_RESERVATIONS_RESPONSE, response, error);
 	qsgp_frame_destroy(&frame);
 	return status;
 }

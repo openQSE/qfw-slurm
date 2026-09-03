@@ -20,6 +20,18 @@ class RequestConflict(JournalError):
     """Raised when an idempotency key is reused for another request."""
 
 
+class AllocationNotFound(JournalError):
+    """Raised when no journal record exists for an allocation."""
+
+
+class AllocationNotAccepted(JournalError):
+    """Raised when an allocation has no active accepted reservation set."""
+
+
+class AllocationReleased(JournalError):
+    """Raised when an allocation's reservation set has been released."""
+
+
 @dataclasses.dataclass(frozen=True)
 class OperationRecord:
     state: str
@@ -484,6 +496,41 @@ class Journal:
             )
             for row in rows
         )
+
+    def reservation_context(
+        self, cluster_name: str, job_id: int, job_uid: int, job_gid: int
+    ) -> tuple[ReservationRecord, ...]:
+        """Return the complete accepted reservation set without mutation."""
+
+        with self._lock:
+            allocation = self._connection.execute(
+                """SELECT job_uid, job_gid, service_set_json, state
+                   FROM allocations
+                   WHERE cluster_name = ? AND canonical_job_id = ?""",
+                (cluster_name, str(job_id)),
+            ).fetchone()
+            if allocation is None:
+                raise AllocationNotFound("allocation is not in the journal")
+            if allocation["job_uid"] != job_uid or allocation["job_gid"] != job_gid:
+                raise RequestConflict("allocation identity changed")
+            if allocation["state"] == "released":
+                raise AllocationReleased("allocation reservations were released")
+            if allocation["state"] != "accepted":
+                raise AllocationNotAccepted(
+                    f"allocation state is {allocation['state']!r}, not accepted"
+                )
+            try:
+                expected = tuple(json.loads(allocation["service_set_json"]))
+            except (TypeError, json.JSONDecodeError) as error:
+                raise JournalError("allocation service set is malformed") from error
+            records = self.reservations(cluster_name, job_id)
+        if not expected or len(expected) != len(set(expected)):
+            raise JournalError("allocation service set is malformed")
+        if tuple(item.service_id for item in records) != tuple(sorted(expected)):
+            raise JournalError("accepted allocation reservation set is incomplete")
+        if any(item.state != "accepted" or item.reservation_id is None for item in records):
+            raise JournalError("accepted allocation contains inactive reservations")
+        return records
 
     def set_allocation_state(
         self, cluster_name: str, job_id: int, state: str

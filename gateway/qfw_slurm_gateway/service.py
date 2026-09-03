@@ -10,17 +10,28 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 from .defw_client import QFwAdapter, QFwAdapterError, QPMBinding
-from .journal import Journal, JournalError, ReservationRecord, RequestConflict
+from .journal import (
+    AllocationNotAccepted,
+    AllocationNotFound,
+    AllocationReleased,
+    Journal,
+    JournalError,
+    ReservationRecord,
+    RequestConflict,
+)
 from .protocol import (
     AdmissionDecision,
     ErrorResponse,
     EvaluateRequest,
     EvaluateResponse,
     GatewayError,
+    GetReservationsRequest,
+    GetReservationsResponse,
     ReleaseRequest,
     ReleaseResponse,
     ReleaseResult,
     ReservationState,
+    Reservation,
     ReserveRequest,
     ReserveResponse,
     ServiceResult,
@@ -102,16 +113,81 @@ class GatewayService:
 
     async def handle(
         self,
-        request: EvaluateRequest | ReserveRequest | ReleaseRequest,
+        request: (
+            EvaluateRequest
+            | ReserveRequest
+            | ReleaseRequest
+            | GetReservationsRequest
+        ),
         sender_uid: int,
-    ) -> EvaluateResponse | ReserveResponse | ReleaseResponse | ErrorResponse:
-        key = (request.cluster_name, request.canonical_job_id)
+    ) -> (
+        EvaluateResponse
+        | ReserveResponse
+        | ReleaseResponse
+        | GetReservationsResponse
+        | ErrorResponse
+    ):
+        job_id = (
+            request.observed_job_id
+            if isinstance(request, GetReservationsRequest)
+            else request.canonical_job_id
+        )
+        key = (request.cluster_name, job_id)
         async with self._allocation_lock(key):
             if isinstance(request, EvaluateRequest):
                 return await self._evaluate(request, sender_uid)
             if isinstance(request, ReserveRequest):
                 return await self._reserve(request, sender_uid)
+            if isinstance(request, GetReservationsRequest):
+                return await self._get_reservations(request, sender_uid)
             return await self._release(request, sender_uid)
+
+    async def _get_reservations(
+        self, request: GetReservationsRequest, sender_uid: int
+    ) -> GetReservationsResponse | ErrorResponse:
+        try:
+            job = await asyncio.to_thread(
+                self.verifier.verify_lookup, request, sender_uid
+            )
+            records = self.journal.reservation_context(
+                request.cluster_name,
+                job.canonical_job_id,
+                job.uid,
+                job.gid,
+            )
+            return GetReservationsResponse(
+                request_id=request.request_id,
+                canonical_job_id=job.canonical_job_id,
+                reservations=tuple(
+                    Reservation(item.service_id, item.reservation_id)
+                    for item in records
+                    if item.reservation_id is not None
+                ),
+            )
+        except AllocationNotFound as error:
+            return _error(
+                GatewayError.ALLOCATION_NOT_FOUND, request.request_id, error
+            )
+        except AllocationNotAccepted as error:
+            return _error(
+                GatewayError.ALLOCATION_NOT_ACCEPTED, request.request_id, error
+            )
+        except AllocationReleased as error:
+            return _error(
+                GatewayError.ALLOCATION_RELEASED, request.request_id, error
+            )
+        except RequestConflict as error:
+            return _error(GatewayError.REQUEST_CONFLICT, request.request_id, error)
+        except SlurmVerificationError as error:
+            return _error(GatewayError.UNAUTHORIZED, request.request_id, error)
+        except JournalError as error:
+            return _error(GatewayError.INTERNAL, request.request_id, error)
+        except Exception as error:
+            return _error(
+                GatewayError.INTERNAL,
+                request.request_id,
+                f"unexpected reservation lookup failure: {error}",
+            )
 
     async def _evaluate(
         self, request: EvaluateRequest, sender_uid: int

@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from qfw_slurm_gateway.protocol import (
+    GetReservationsRequest,
     ReleaseRequest,
     ReserveRequest,
     Workload,
@@ -113,3 +114,45 @@ def test_protected_daemon_identity_can_manage_another_users_job() -> None:
     assert verifier.verify_release(release, 990, 1001).uid == 1001
     with pytest.raises(SlurmVerificationError, match="cannot release"):
         verifier.verify_release(release, 991, 1001)
+
+
+def test_lookup_derives_canonical_heterogeneous_identity() -> None:
+    leader = {
+        "job_id": 42,
+        "user_id": 1001,
+        "group_id": 1002,
+        "job_state": "RUNNING",
+        "het_job_id": {"number": 42},
+    }
+    component = {
+        **leader,
+        "job_id": 43,
+        "het_job_offset": {"number": 1},
+    }
+    verifier = SlurmVerifier(
+        "qfw-cluster",
+        trusted_sender_uids=frozenset({990}),
+        runner=runner([leader, component]),
+    )
+    lookup = GetReservationsRequest(8, "qfw-cluster", 43, 1001, 1002)
+
+    job = verifier.verify_lookup(lookup, 990)
+
+    assert job.canonical_job_id == 42
+    assert job.uid == 1001
+
+
+def test_lookup_rejects_untrusted_or_wrong_owner() -> None:
+    record = {
+        "job_id": 42,
+        "user_id": 1001,
+        "group_id": 1002,
+        "job_state": "RUNNING",
+    }
+    verifier = SlurmVerifier("qfw-cluster", runner=runner(record))
+    lookup = GetReservationsRequest(8, "qfw-cluster", 42, 1001, 1002)
+
+    with pytest.raises(SlurmVerificationError, match="cannot retrieve"):
+        verifier.verify_lookup(lookup, 2000)
+    with pytest.raises(SlurmVerificationError, match="differs"):
+        verifier.verify_lookup(dataclasses.replace(lookup, job_uid=2000), 2000)

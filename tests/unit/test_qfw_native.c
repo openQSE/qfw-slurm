@@ -165,6 +165,15 @@ static int test_request_and_environment(void)
 	};
 	char error[256] = {0};
 	char output[1024];
+	struct qsgp_get_reservations_response lookup = {
+		.request_id = 2,
+		.canonical_job_id = 100,
+		.reservation_count = 2,
+		.reservations = {
+			{.service_id = "nwqsim-site", .reservation_id = UINT64_MAX},
+			{.service_id = "iqm-ornl-20q", .reservation_id = 41},
+		},
+	};
 
 	qfw_plugin_config_init(&config);
 	config.resource_count = 2;
@@ -197,6 +206,14 @@ static int test_request_and_environment(void)
 	CHECK(strcmp(output,
 		"[[\"iqm-ornl-20q\",\"41\"],"
 		"[\"nwqsim-site\",\"18446744073709551615\"]]") == 0);
+	CHECK(qfw_lookup_reservations_json(&lookup, output,
+		sizeof(output)) == 0);
+	CHECK(strcmp(output,
+		"[[\"iqm-ornl-20q\",\"41\"],"
+		"[\"nwqsim-site\",\"18446744073709551615\"]]") == 0);
+	lookup.reservations[1].service_id[0] = '\0';
+	CHECK(qfw_lookup_reservations_json(&lookup, output,
+		sizeof(output)) != 0);
 	return 0;
 }
 
