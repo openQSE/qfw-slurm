@@ -3,7 +3,15 @@
 qfw-slurm-driver \- exercise QFw gateway reservation operations
 .SH SYNOPSIS
 .B qfw-slurm-driver
+.B evaluate
+.RI [ options ]
+.br
+.B qfw-slurm-driver
 .B reserve
+.RI [ options ]
+.br
+.B qfw-slurm-driver
+.B get-reservations
 .RI [ options ]
 .br
 .B qfw-slurm-driver
@@ -24,9 +32,17 @@ plugin. A production gateway verifies that metadata against an active job in
 slurmctld before contacting QPM services.
 .SH COMMANDS
 .TP
+.B evaluate
+Perform one non-binding admission evaluation. No reservation ID is created.
+.TP
 .B reserve
 Request the configured QPM service set, validate every result, and print the
 canonical reservation tuple set. The reservation remains active.
+.TP
+.B get-reservations
+Retrieve the accepted tuple set for an observed active Slurm job. The gateway
+derives its canonical allocation ID and reads the journal without contacting
+the directory service or QPMd.
 .TP
 .B release
 Release the reservation set associated with the cluster and canonical job ID.
@@ -45,7 +61,9 @@ Read the protected native client and resource mapping from
 Set the Slurm cluster name expected by the gateway.
 .TP
 .BI --job-id " id"
-Set the canonical Slurm job ID.
+Set the canonical Slurm job ID. For
+.BR get-reservations ,
+set the observed job or heterogeneous component ID instead.
 .TP
 .BI --uid " uid"
 Set the job owner's numeric user ID.
@@ -54,7 +72,9 @@ Set the job owner's numeric user ID.
 Set the job owner's numeric group ID.
 .TP
 .BI --allocation-epoch " seconds"
-Set a stable allocation timestamp used in request identity.
+Set a stable allocation timestamp used in request identity. It is not required
+by
+.BR get-reservations .
 .TP
 .BI --walltime-seconds " seconds"
 Set the finite reservation limit. Required by

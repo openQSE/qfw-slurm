@@ -1,5 +1,7 @@
 # Slurm Allocation Workflow for QFw Reservations
 
+**Status:** draft
+
 ## Goal
 
 The integration shall evaluate quantum eligibility and likely capacity while a
@@ -42,6 +44,8 @@ This repository is preparing its first release. Migration does not preserve
 the existing step-time reservation workflow as a compatibility path. Once the
 allocation-time path passes its acceptance tests, the replaced callbacks,
 configuration, epilog workflow, tests, and documentation are removed.
+
+**Status:** draft
 
 ## Desired Workflow
 
@@ -115,7 +119,7 @@ sequenceDiagram
         alt Every final reservation accepts
             Gateway->>Gateway: Journal accepted reservation set
             Gateway-->>Helper: ACCEPTED with reservation tuples
-            Helper->>Helper: Store protected allocation state
+            Helper->>Helper: Store controller-local retry state
             Helper-->>BB: Pre-run complete
         else Capacity changed and a reservation is delayed
             Gateway->>QPM: Release reservations accepted by this attempt
@@ -132,13 +136,17 @@ sequenceDiagram
         end
     end
 
-    Scheduler->>BB: Request job environment paths
-    BB->>Helper: Read accepted reservation set
-    Helper-->>BB: QFW_RESERVATIONS assignment
-    BB-->>Scheduler: Add reservation environment
     Scheduler-->>User: Allocation granted
 
-    User->>App: Start one or more srun application steps
+    User->>Scheduler: Start an srun application step
+    Scheduler->>SPANK: Remote initialization on application node
+    SPANK->>Gateway: QSGP QFW_GW_GET_RESERVATIONS(observed job ID, UID, GID)
+    Gateway->>Gateway: Authenticate sender and query Slurm job owner
+    Gateway->>Gateway: Derive canonical ID and read accepted journal tuples
+    Gateway-->>SPANK: Canonical job ID and reservation tuples
+    SPANK->>SPANK: Set QFW_RESERVATIONS
+    SPANK-->>Scheduler: Permit application launch
+    Scheduler->>App: Start application process
     App->>Directory: Resolve the reserved QPM service
     Directory-->>App: Current QPM execution binding
     App->>QPM: Execute with reservation_id
@@ -158,6 +166,8 @@ sequenceDiagram
     Helper-->>BB: Success after recording the outcome
     BB-->>Scheduler: Teardown complete
 ```
+
+**Status:** draft
 
 ## User-Facing Allocation Contract
 
@@ -195,17 +205,22 @@ places an IQM service host in a Slurm partition may choose whether applications
 also allocate that host. Requiring the host as an exclusive node would reduce
 QPM sharing below the capacity allowed by qhw-admission.
 
+**Status:** draft
+
 ## Component Responsibilities
 
 | Component | Responsibility | Excluded responsibility |
 | --- | --- | --- |
 | Allocator SPANK adapter | Register and validate user-facing options, then let Slurm copy them into `spank_job_env` | Directory lookup, gateway communication, reservation, release, and application environment mutation |
+| Remote SPANK adapter | Retrieve accepted tuples from the gateway and inject `QFW_RESERVATIONS` before each application step | Evaluation, reservation, release, polling, directory lookup, or reading controller state |
 | `job_submit/lua` | Read trusted SPANK option metadata, apply static site policy, and construct the internal burst-buffer directive | Network I/O or QPM admission while slurmctld locks are held |
 | `burst_buffer/lua` | Connect Slurm's pending, begin, cancel, completion, and teardown states to small qfw-slurm helpers | QPM selection or admission policy |
 | Burst-buffer helper | Parse the internal directive, issue one evaluation per Slurm poll, issue one final reservation attempt during pre-run, maintain protected Slurm-side state, and translate each result into a burst-buffer status | Autonomous polling or capacity decisions |
 | Gateway | Authenticate the Slurm service, verify the Slurm job, resolve exact services, forward QPM calls, and journal terminal outcomes | Polling, provider selection, or independent scheduling |
 | QPMd | Evaluate requests without holding capacity, commit final reservations, validate entitlement and credentials, invoke qhw-admission, own reservation IDs, and authorize execution | Slurm node scheduling |
 | QFw application backend | Parse `QFW_RESERVATIONS`, resolve the selected service through the directory, and attach the reservation ID to execution calls | Creating or releasing the allocation reservation |
+
+**Status:** draft
 
 ## Source-Validated Slurm Mechanisms
 
@@ -228,7 +243,11 @@ The same source shows that a permanent stage-in failure holds the job rather
 than cancelling it. The desired cancellation behavior therefore requires an
 additional, explicitly tested controller action.
 
+**Status:** draft
+
 ## Slurm Integration
+
+**Status:** draft
 
 ### Allocator option transfer
 
@@ -236,9 +255,11 @@ Slurm calls allocator SPANK initialization from both `salloc` and `sbatch`.
 After option parsing, Slurm converts each registered option into a bounded
 `_SLURM_SPANK_OPTION_*` entry and copies it into `job_desc.spank_job_env`.
 
-The revised SPANK module performs no gateway initialization. Local and remote
-SPANK contexts return without registering quantum options or performing QSGP
-operations. This removes reservation work from `srun` and `slurmstepd`.
+The allocator context performs no gateway operation. The remote context does
+not register allocation options or reserve QPM capacity. It performs only the
+authenticated reservation lookup needed to initialize an application step.
+
+**Status:** draft
 
 ### Job-submit translation
 
@@ -255,6 +276,8 @@ The job-submit callback performs parsing and local policy checks only. Slurm
 calls it while controller configuration, job, node, and partition read locks
 are held. Directory, gateway, and QPM calls occur during asynchronous
 burst-buffer stage-in instead.
+
+**Status:** draft
 
 ### QSGP operation contract
 
@@ -291,6 +314,8 @@ The QPM admission C contract uses zero as the no-reservation sentinel in an
 evaluation decision. The gateway normalizes zero to an absent identifier and
 rejects any nonzero reservation ID returned by evaluation.
 
+**Status:** draft
+
 ### Preliminary evaluation stage-in
 
 The Lua burst-buffer implementation starts stage-in before committing compute
@@ -325,6 +350,8 @@ When several QPMs are requested, one evaluation covers the complete set. An
 `ACCEPTED` response is returned only when every requested service evaluates as
 admissible. There is nothing to roll back because evaluation holds no capacity.
 
+**Status:** draft
+
 ### Final reservation during pre-run
 
 After Slurm assigns every classical component, `slurm_bb_pre_run` invokes the
@@ -348,6 +375,8 @@ but it fails the complete allocation rather than requeueing it. Requeue is
 bounded and uses Slurm backoff. Exhausting the configured attempt limit holds
 or fails the job according to explicit site policy instead of cycling forever.
 
+**Status:** draft
+
 ### Permanent rejection
 
 Slurm's generic burst-buffer failure path places a job on hold. That behavior
@@ -367,40 +396,44 @@ The pre-run path must distinguish a retryable `DELAYED` result from a permanent
 the complete job. The latter must bypass further requeue attempts and terminate
 the allocation after rollback.
 
+**Status:** draft
+
 ### Accepted reservation state
 
-The helper stores the accepted tuple set in a SlurmUser-owned state directory.
-The record is keyed by cluster and canonical allocation ID. It includes the
-service IDs, reservation IDs, trusted allocation identity, request identity,
-attempt count, and lifecycle state. QPM runtime identities and generations
-remain in the gateway journal rather than being duplicated in Slurm state.
+The gateway SQLite journal is the authoritative accepted tuple store. It is
+keyed by cluster and canonical allocation ID and retains reservation IDs, QPM
+runtime identities, generations, owner identity, and lifecycle state.
 
-Permissions prevent allocation users from changing the record. The record
-contains no provider credential. Atomic replacement prevents a remote
-slurmstepd from reading a partial file.
+The burst-buffer helper keeps only controller-local retry and teardown state.
+That file is root protected and is not mounted on compute nodes. It is not an
+application environment handoff and contains no provider credential.
 
-In Slurm 25.05, `slurm_bb_paths` runs before the asynchronous pre-run helper,
-so it cannot export the reservation created during pre-run. The remote SPANK
-callback therefore has one read-only responsibility. It reads the protected
-environment record after pre-run and injects `QFW_RESERVATIONS` into each
-application step. It does not contact the gateway, create a reservation, or
-change lifecycle state.
+Before each managed application step, remote SPANK sends one authenticated
+`QFW_GW_GET_RESERVATIONS` request containing its observed Slurm job ID and the
+task UID/GID. The gateway derives the canonical allocation ID from Slurm,
+checks the active owner, and returns only accepted tuples from its journal.
+This lookup never calls the DEFw directory, QPMd, or qhw-admission and never
+changes reservation state. SPANK injects the returned compact JSON through
+`spank_setenv()` and fails the step closed when lookup fails.
+
+**Status:** draft
 
 ### Normal and heterogeneous environments
 
-For an ordinary allocation, Slurm carries the supplemental environment into
-the allocation shell as plain `QFW_RESERVATIONS`.
+For an ordinary allocation, the observed job ID is also the canonical ID.
 
 For a heterogeneous allocation, the quantum options belong to the component
-that runs the QFw application. The helper writes protected aliases for both
-the canonical heterogeneous job ID and that component job ID. A remote step
-uses its authoritative Slurm job ID to read the matching alias and receives
-plain `QFW_RESERVATIONS` through `spank_setenv()`.
+that runs the QFw application. Remote SPANK supplies that component's observed
+job ID. The gateway queries Slurm, derives and verifies the heterogeneous
+leader ID, then looks up the canonical reservation set.
 
-Components without a matching accepted record receive no reservation context.
+Every component owned by the same active heterogeneous allocation receives the
+same canonical tuple set when it starts a managed application step.
 The QPM host does not require a heterogeneous component because it is a
 site-owned service outside the application allocation. This keeps all changes
 inside qfw-slurm and preserves the existing `qfw-srun --het-group` interface.
+
+**Status:** draft
 
 ## Release and Teardown
 
@@ -425,6 +458,8 @@ validated separately before it is claimed as guaranteed cleanup.
 The existing `EpilogSlurmctld` release executable becomes unnecessary after
 burst-buffer teardown owns allocation release. It is removed with the remote
 SPANK reservation path after equivalent cancellation and shutdown tests pass.
+
+**Status:** draft
 
 ## Gateway State Changes
 
@@ -460,6 +495,8 @@ set accepts. Delay, rejection, or operational failure initiates rollback.
 Incomplete rollback remains visible in the journal even though no partial set
 is returned to Slurm as accepted.
 
+**Status:** draft
+
 ## Migration from the Existing Implementation
 
 The repository already provides reusable pieces that remain valid.
@@ -486,12 +523,16 @@ replaced rather than retained as an alternate workflow.
 | Gateway client initialized by every SPANK context | Gateway client used by the burst-buffer helper |
 | First `srun` step reserves the QPM | Pending stage-in evaluates; pre-run reserves after node assignment |
 | Delayed admission denies a task launch | Delayed evaluation returns `BUSY`; delayed final reservation deallocates and requeues |
-| Remote SPANK reserves and exports | Remote SPANK only reads protected accepted state and exports it; pre-run owns reservation |
+| Remote SPANK reserves and exports | Remote SPANK retrieves accepted journal state through `QFW_GW_GET_RESERVATIONS`; pre-run owns reservation |
 | Task initialization reports permanent rejection | Evaluation rejection fails before node assignment; final rejection deallocates nodes and fails the allocation |
 | Controller epilog releases reservations | Burst-buffer teardown performs best-effort release |
 | Gateway journals delayed reserve as `not-accepted` | Delayed evaluation is polled; delayed final reservation triggers rollback and a new Slurm allocation cycle |
 
+**Status:** draft
+
 ## Implementation Sequence
+
+**Status:** draft
 
 ### Step 1. Preserve a verified baseline
 
@@ -503,6 +544,8 @@ callbacks available in that version.
 Exit criteria include a clean native build, gateway unit tests, deterministic
 driver tests, and an installed-tree smoke test.
 
+**Status:** draft
+
 ### Step 2. Define internal allocation metadata
 
 Define the bounded names used between allocator SPANK and `job_submit/lua`.
@@ -513,6 +556,8 @@ unknown required fields, duplicates, truncation, and inconsistent values.
 The grammar is internal to qfw-slurm. Users continue to supply separate command
 options rather than a packed request string.
 
+**Status:** draft
+
 ### Step 3. Restrict SPANK to allocation submission
 
 Refactor `spank_quantum.c` so `S_CTX_ALLOCATOR` owns option registration and
@@ -522,6 +567,8 @@ option callbacks.
 
 Add tests for `salloc` and `sbatch` option acceptance. Verify that `srun`
 rejects the quantum options and that ordinary `srun` steps remain unaffected.
+
+**Status:** draft
 
 ### Step 4. Add job-submit translation
 
@@ -534,6 +581,8 @@ multiple QPM services, missing fields, malformed numbers, and conflicting
 configuration. A timing test confirms that the callback performs no external
 I/O.
 
+**Status:** draft
+
 ### Step 5. Add the private burst-buffer helper
 
 Create one private native executable or subcommand for evaluate, reserve, state
@@ -544,6 +593,8 @@ encoding or response validation.
 State paths, ownership, modes, atomic writes, size limits, and cleanup rules
 become installed configuration. Unit tests run without Slurm by supplying
 fixture job metadata and a deterministic gateway.
+
+**Status:** draft
 
 ### Step 6. Add the QSGP evaluation operation
 
@@ -562,6 +613,8 @@ Tests cover delayed-to-delayed, delayed-to-accepted, delayed-to-rejected,
 accepted and rejected replay, malformed evaluation responses, and concurrent
 polls for the same allocation.
 
+**Status:** draft
+
 ### Step 7. Implement burst-buffer evaluation hooks
 
 Install the Lua functions required by `burst_buffer/lua`. Setup validates local
@@ -571,6 +624,8 @@ reports no capacity because QPMd owns quantum accounting.
 
 An accepted evaluation records only the request identity and diagnostic state
 needed for pre-run. Repeated stage-in calls do not create a reservation.
+
+**Status:** draft
 
 ### Step 8. Reserve during pre-run and requeue on contention
 
@@ -585,6 +640,8 @@ new evaluation attempt. Use bounded retry and backoff; never poll QPMd while
 classical nodes remain assigned. Test that a lost accepted response replays the
 same reservation instead of creating another one.
 
+**Status:** draft
+
 ### Step 9. Implement rejection-to-allocation failure
 
 Prototype cancellation from the asynchronous stage-in execution context and
@@ -597,17 +654,24 @@ reservation. A second test rejects during final reserve. It must release every
 classical component, roll back any partial QPM set, and fail rather than
 requeue. A held pending job does not satisfy either test.
 
+**Status:** draft
+
 ### Step 10. Export accepted reservations
 
 Because Slurm 25.05 calls `slurm_bb_paths` before pre-run, keep that hook free
-of reservation export. Restrict remote SPANK to reading the protected accepted
-record and calling `spank_setenv()` for application steps. It must make no
-gateway call and must not create, release, or alter a reservation.
+of reservation export. Add the bounded `QFW_GW_GET_RESERVATIONS` QSGP request
+and response. Remote SPANK sends one lookup during initialization and calls
+`spank_setenv()` with the returned compact tuple JSON. The gateway verifies the
+observed job with Slurm, derives the canonical allocation ID, and reads only
+its durable journal. Neither side creates, releases, extends, or polls a
+reservation during lookup.
 
 For ordinary allocations, verify that every later step receives the same
 canonical `QFW_RESERVATIONS` value. Test the application component in group
-zero and a nonzero group. A component without the protected alias receives no
-reservation context.
+zero and a nonzero group. Verify that compute nodes cannot access the
+controller-local burst-buffer state or gateway journal.
+
+**Status:** draft
 
 ### Step 11. Implement best-effort teardown
 
@@ -620,16 +684,20 @@ Tests cover already-terminal reservations, missing QPM registrations, gateway
 unavailability, partial release, repeated teardown, and slurmctld restart.
 They verify that Slurm finishes teardown in every case.
 
+**Status:** draft
+
 ### Step 12. Remove the superseded workflow
 
 Delete remote and local SPANK reservation behavior, task-init launch denial,
 the controller epilog release path, their configuration keys, and their tests.
-Retain only the remote read-only accepted-state injection required by the
-Slurm 25.05 callback ordering.
+Retain only the remote authenticated journal lookup and environment injection
+required by the Slurm 25.05 callback ordering.
 Update the standalone driver so it remains a diagnostic of the common QSGP and
 gateway operations rather than a model of Slurm callback placement.
 
 No compatibility wrapper or deprecated option mode remains.
+
+**Status:** draft
 
 ### Step 13. Package the Slurm configuration
 
@@ -640,6 +708,8 @@ pages, and example configuration.
 Document the single-provider limitation of Slurm's burst-buffer interface. A
 site already using another `BurstBufferType`, including DataWarp, needs a
 combined provider or a different controller integration.
+
+**Status:** draft
 
 ### Step 14. Validate on the virtual cluster
 
@@ -669,6 +739,8 @@ the job returns to pending. QPM accounting must show at most one reservation
 per service and Slurm allocation. Teardown must leave Slurm terminal even when
 release is reported as unresolved.
 
+**Status:** draft
+
 ## Known Constraints
 
 The burst-buffer interface permits only one configured provider. This design
@@ -696,6 +768,8 @@ slurmctld. Stable request IDs, accepted-response journaling, idempotent release,
 rollback, and expiration reduce the failure window. They do not provide a
 distributed transaction.
 
+**Status:** draft
+
 ## Completion Criteria
 
 The migration is complete when all of the following statements hold.
@@ -715,7 +789,11 @@ The migration is complete when all of the following statements hold.
 - Cancellation and completion attempt release exactly once per lifecycle.
 - Teardown completes from Slurm's perspective even when release is unresolved.
 - Accepted reservations remain valid for the complete application lifetime.
-- Remote SPANK performs no reservation operation and the controller-epilog
-  workflow is absent.
+- Remote SPANK performs only `QFW_GW_GET_RESERVATIONS`; it performs no
+  evaluation, reservation, extension, release, polling, or directory RPC.
+- No reservation handoff requires a filesystem shared by slurmctld and compute
+  nodes, and the controller-epilog workflow is absent.
 - The complete simulator matrix and guarded real-IQM smoke test pass on a
   freshly built Slurm cluster.
+
+**Status:** draft

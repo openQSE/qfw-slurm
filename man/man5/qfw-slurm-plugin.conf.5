@@ -3,14 +3,16 @@
 qfw-slurm-plugin.conf \- native gateway client and QPU resource mapping
 .SH DESCRIPTION
 .B qfw-slurm-plugin.conf
-is an INI file read by the Slurm lifecycle helper and standalone driver. It
-defines one authenticated gateway endpoint and maps each Slurm
+is an INI file read by remote SPANK, the Slurm lifecycle helper, and the
+standalone driver. It defines one authenticated gateway endpoint and maps each
+Slurm
 .B --qpu
 name to one exact directory-service QPM service ID.
 .PP
 The file must be owned by root and must not be group- or world-writable. It
 must remain readable by the controller's configured
-.BR SlurmUser .
+.B SlurmUser
+and by privileged remote SPANK on each compute node.
 .SH GATEWAY SECTION
 .TP
 .BI host = hostname

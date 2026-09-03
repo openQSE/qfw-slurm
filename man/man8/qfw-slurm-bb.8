@@ -23,27 +23,21 @@ should keep the job pending and poll later.
 .TP
 .B reserve
 Perform one final reservation after compute nodes are assigned. Accepted
-tuples are written atomically. Exit status 10 requests deallocation and retry;
+state is recorded for controller retry and teardown. The gateway journal owns
+the authoritative tuples. Exit status 10 requests deallocation and retry;
 status 20 is permanent rejection or attempt exhaustion.
 .TP
 .B release
 Attempt allocation-wide release. Missing local state does not suppress the
 gateway request when the cluster identity is configured. The operation always
 returns success after recording any unresolved result.
-.TP
-.B paths
-Render the accepted tuple set as an environment assignment. This diagnostic
-operation is not used for pre-run export on Slurm 25.05 because Slurm calls its
-paths hook before pre-run.
-.TP
 .B status
 Print the protected allocation state as JSON.
 .SH STATE
-JSON state and a single-line
-.I .env
-record are keyed by cluster and job ID. Files use atomic replacement and mode
-0600 inside a mode 0700 SlurmUser-owned directory. The SPANK remote callback
-only reads the accepted environment record and never invokes this helper.
+Controller-local JSON state is keyed by cluster and job ID. Files use atomic
+replacement and mode 0600 inside a mode 0700 SlurmUser-owned directory. No
+state file is consumed by compute nodes. Remote SPANK retrieves accepted tuples
+from the gateway journal.
 .SH EXIT STATUS
 .TP
 .B 0

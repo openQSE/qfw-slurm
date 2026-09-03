@@ -7,7 +7,8 @@ dependency.
 The repository provides:
 
 - `spank_quantum.so`, which collects bounded requirements at `salloc` or
-  `sbatch` time and exports already accepted reservation tuples to tasks.
+  `sbatch` time and retrieves already accepted tuples from the gateway for
+  application steps.
 - Slurm job-submit and burst-buffer Lua providers, which evaluate QPM
   admission before node assignment, reserve after node assignment, and
   release during allocation teardown.

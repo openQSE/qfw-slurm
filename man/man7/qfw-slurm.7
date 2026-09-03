@@ -17,10 +17,10 @@ for quantum capacity.
 .SH COMPONENTS
 .TP
 .B spank_quantum.so
-Registers allocator options. In remote context it reads protected,
-already-accepted state and injects
+Registers allocator options. In remote context it retrieves accepted tuples
+from the authenticated gateway and injects
 .B QFW_RESERVATIONS
-without contacting the gateway or modifying reservations.
+without evaluating, creating, extending, or releasing reservations.
 .TP
 .B job_submit.lua
 Maps allocator option metadata to exact service IDs and creates the bounded
@@ -100,17 +100,19 @@ tuples. For example:
 .B [["nwqsim-site","41"],["iqm-ornl-20q","17"]]
 .RE
 .PP
-The value is created once per allocation and reused by later
+The value is created once per allocation in the gateway journal. Remote SPANK
+retrieves the same value for each later
 .B srun
-steps. Passing reservation options to
+step. This handoff does not require a filesystem shared by slurmctld and the
+compute nodes. Passing reservation options to
 .B srun
 is an error.
 .SH SECURITY
 QSGP frames use network byte order and MUNGE protection. The gateway verifies
 the authenticated service UID and authoritative Slurm job identity. Protected
-state is owned by SlurmUser and is not writable by allocation users. Provider
-credentials never enter Slurm metadata, state files, or application
-environments.
+controller state is owned by SlurmUser and is not writable by allocation
+users. The gateway journal is controller-local. Provider credentials never
+enter Slurm metadata, state files, or application environments.
 .SH LIMITATIONS
 Slurm supports one configured burst-buffer provider. A site already using a
 different provider must combine the behavior or use another controller

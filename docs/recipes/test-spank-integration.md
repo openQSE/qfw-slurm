@@ -14,7 +14,10 @@ states and recovery behavior.
 - `/etc/qfw-slurm/resources.lua`, `plugin.conf`, and
   `burst-buffer.lua.conf` are root-owned and not writable by users.
 - The configured lifecycle state directory is owned by `SlurmUser` with mode
-  `0700` and is visible at the same path on compute nodes.
+  `0700` and remains local to the controller.
+- Compute nodes can reach the gateway endpoint and read their local protected
+  `/etc/qfw-slurm/plugin.conf`. They do not mount the gateway journal or
+  controller lifecycle state.
 
 `qfw-slurm-burst-buffer.conf(5)`, `qfw-slurm-plugin.conf(5)`, and
 `qfw-slurm-gateway.yaml(5)` describe those files.
@@ -108,6 +111,6 @@ gateway log. An `evaluation-delayed` state is normal and must have no
 `reservations` field. A `reservation-delayed` state must return the assigned
 nodes before the next evaluation cycle.
 
-If accepted state cannot be written after QPMd commits a reservation, teardown
-still sends allocation-wide release using the configured cluster and job ID.
-The gateway journal is authoritative for finding that reservation.
+If controller retry state cannot be written after QPMd commits a reservation,
+teardown still sends allocation-wide release using the configured cluster and
+job ID. The gateway journal is authoritative for both lookup and release.
