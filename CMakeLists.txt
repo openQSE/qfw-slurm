@@ -110,6 +110,8 @@ install(PROGRAMS slurm/qfw_slurm_bb.py
 	DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/qfw-slurm)
 install(FILES systemd/qfw-slurm-gateway.service
 	DESTINATION ${QFW_SLURM_SYSTEMD_DIR})
+install(FILES LICENSE
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/qfw-slurm)
 install(PROGRAMS setup/qfw_slurm_install.sh
 	DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/qfw-slurm)
 
