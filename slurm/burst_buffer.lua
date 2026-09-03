@@ -30,7 +30,7 @@ local function canonical_job_id(job_id, job_info)
 end
 
 local function helper_command(operation, job_id, job_script, uid, gid,
-	job_info, path_file)
+	job_info)
 	local cluster = job_info.cluster
 	local submit_time = tonumber(job_info.submit_time)
 	local restart_count = tonumber(job_info.restart_cnt) or 0
@@ -61,17 +61,13 @@ local function helper_command(operation, job_id, job_script, uid, gid,
 		table.insert(command, "--job-script")
 		table.insert(command, quote(job_script))
 	end
-	if path_file ~= nil then
-		table.insert(command, "--path-file")
-		table.insert(command, quote(path_file))
-	end
 	return table.concat(command, " ")
 end
 
 local function run_helper(operation, job_id, job_script, uid, gid,
-	job_info, path_file)
+	job_info)
 	local command, message = helper_command(operation, job_id, job_script,
-		uid, gid, job_info, path_file)
+		uid, gid, job_info)
 	if command == nil then
 		return 30, message
 	end
@@ -159,8 +155,8 @@ function slurm_bb_real_size(job_id, uid, gid, job_info)
 end
 
 function slurm_bb_paths(job_id, job_script, path_file, uid, gid, job_info)
-	-- Slurm 25.05 imports this file before pre-run. The remote SPANK path
-	-- injects accepted context without creating or modifying a reservation.
+	-- Slurm requires this callback. Remote SPANK retrieves accepted context
+	-- directly from the authenticated gateway after pre-run.
 	return slurm.SUCCESS
 end
 

@@ -1,58 +1,37 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include <slurm/slurm.h>
 #include <slurm/spank.h>
 
 #include "qfw_slurm_native.h"
 
-#define QFW_STATE_PATH_MAX 4096U
+#define QFW_CONFIG_PATH_MAX 4096U
+#define QFW_QPU_OPTION_ENV "_SLURM_SPANK_OPTION_spank_quantum_qpu"
 
 SPANK_PLUGIN(spank_quantum, 1)
 
 static struct qfw_quantum_options quantum_options;
-static char state_dir[QFW_STATE_PATH_MAX] =
-	"/var/lib/qfw-slurm/allocations";
-static uid_t state_owner_uid;
+static char config_path[QFW_CONFIG_PATH_MAX] = "/etc/qfw-slurm/plugin.conf";
 
 static int parse_arguments(int argc, char **argv)
 {
-	const char prefix[] = "state-dir=";
-	const char owner_prefix[] = "state-owner-uid=";
+	const char prefix[] = "config=";
 	int index;
 
 	for (index = 0; index < argc; index++) {
-		if (strncmp(argv[index], prefix, sizeof(prefix) - 1U) == 0) {
-			if (argv[index][sizeof(prefix) - 1U] == '\0' ||
-			    strlen(argv[index] + sizeof(prefix) - 1U) >=
-			    sizeof(state_dir))
-				return SLURM_ERROR;
-			(void)snprintf(state_dir, sizeof(state_dir), "%s",
-				argv[index] + sizeof(prefix) - 1U);
-		} else if (strncmp(argv[index], owner_prefix,
-			sizeof(owner_prefix) - 1U) == 0) {
-			char *end = NULL;
-			unsigned long value;
-
-			errno = 0;
-			value = strtoul(argv[index] + sizeof(owner_prefix) - 1U,
-				&end, 10);
-			if (errno != 0 || end == NULL || *end != '\0' ||
-			    value > UINT32_MAX)
-				return SLURM_ERROR;
-			state_owner_uid = (uid_t)value;
-		} else {
+		if (strncmp(argv[index], prefix, sizeof(prefix) - 1U) != 0 ||
+		    argv[index][sizeof(prefix) - 1U] == '\0' ||
+		    strlen(argv[index] + sizeof(prefix) - 1U) >=
+		    sizeof(config_path))
 			return SLURM_ERROR;
-		}
+		(void)snprintf(config_path, sizeof(config_path), "%s",
+			argv[index] + sizeof(prefix) - 1U);
 	}
 	return SLURM_SUCCESS;
 }
@@ -77,44 +56,46 @@ static int cluster_name(char *output, size_t output_size)
 
 static int inject_reservation_context(spank_t spank)
 {
-	const char prefix[] = "QFW_RESERVATIONS=";
+	struct qfw_get_reservations_operation_result result;
+	struct qfw_plugin_config config;
+	struct qfw_gateway_client client;
 	char cluster[QSGP_MAX_CLUSTER_NAME + 1U];
-	char path[QFW_STATE_PATH_MAX];
-	char content[QFW_RESERVATIONS_ENV_SIZE + sizeof(prefix) + 1U];
-	struct stat metadata;
+	char option_value[QFW_PLUGIN_MAX_RESOURCE_NAME + 1U];
+	char error[QFW_PLUGIN_MAX_ERROR + 1U] = {0};
 	uint32_t job_id;
-	ssize_t size;
-	int descriptor;
+	uid_t job_uid;
+	gid_t job_gid;
+	int status;
 
+	status = spank_getenv(spank, QFW_QPU_OPTION_ENV, option_value,
+		sizeof(option_value));
+	if (status == ESPANK_ENV_NOEXIST)
+		return SLURM_SUCCESS;
+	if (status != ESPANK_SUCCESS || option_value[0] == '\0')
+		return SLURM_ERROR;
 	if (spank_get_item(spank, S_JOB_ID, &job_id) != ESPANK_SUCCESS ||
+	    spank_get_item(spank, S_JOB_UID, &job_uid) != ESPANK_SUCCESS ||
+	    spank_get_item(spank, S_JOB_GID, &job_gid) != ESPANK_SUCCESS ||
 	    cluster_name(cluster, sizeof(cluster)) != 0)
 		return SLURM_ERROR;
-	if (snprintf(path, sizeof(path), "%s/%s-%u.env", state_dir,
-		cluster, job_id) >= (int)sizeof(path))
-		return SLURM_ERROR;
-	descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (descriptor < 0)
-		return errno == ENOENT ? SLURM_SUCCESS : SLURM_ERROR;
-	if (fstat(descriptor, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
-	    metadata.st_uid != state_owner_uid ||
-	    (metadata.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
-	    metadata.st_size <= (off_t)(sizeof(prefix) - 1U) ||
-	    metadata.st_size >= (off_t)sizeof(content)) {
-		(void)close(descriptor);
+	if (qfw_plugin_config_load(config_path, &config, error,
+		sizeof(error)) != 0 ||
+	    qfw_gateway_client_init(&client, &config, error,
+		sizeof(error)) != QFW_GATEWAY_OK) {
+		slurm_error("%s: %s", plugin_name, error);
 		return SLURM_ERROR;
 	}
-	size = read(descriptor, content, (size_t)metadata.st_size);
-	(void)close(descriptor);
-	if (size != metadata.st_size)
+	status = qfw_get_reservations_operation(&client, cluster, job_id,
+		job_uid, job_gid, &result);
+	qfw_gateway_client_destroy(&client);
+	if (status != 0 || result.state != QFW_OPERATION_ACCEPTED) {
+		slurm_error("%s: reservation lookup failed: %s", plugin_name,
+			result.diagnostic[0] == '\0' ? "unknown error" :
+			result.diagnostic);
 		return SLURM_ERROR;
-	content[size] = '\0';
-	if (content[size - 1] == '\n')
-		content[--size] = '\0';
-	if (strncmp(content, prefix, sizeof(prefix) - 1U) != 0 ||
-	    strchr(content, '\n') != NULL)
-		return SLURM_ERROR;
+	}
 	if (spank_setenv(spank, "QFW_RESERVATIONS",
-		content + sizeof(prefix) - 1U, 1) != ESPANK_SUCCESS)
+		result.reservations_json, 1) != ESPANK_SUCCESS)
 		return SLURM_ERROR;
 	return SLURM_SUCCESS;
 }
@@ -169,7 +150,7 @@ int slurm_spank_init(spank_t spank, int argc, char **argv)
 	(void)argc;
 	qfw_quantum_options_init(&quantum_options);
 	if (parse_arguments(argc, argv) != SLURM_SUCCESS) {
-		slurm_error("%s: invalid state-dir argument", plugin_name);
+		slurm_error("%s: invalid config argument", plugin_name);
 		return SLURM_ERROR;
 	}
 	if (spank_context() == S_CTX_REMOTE)

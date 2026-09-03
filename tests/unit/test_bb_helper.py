@@ -78,24 +78,16 @@ def test_delayed_evaluation_is_retryable(tmp_path: Path) -> None:
     assert log.read_text().splitlines() == ["evaluate", "evaluate"]
 
 
-def test_reserve_paths_and_best_effort_release(tmp_path: Path) -> None:
+def test_reserve_records_controller_state_and_releases(tmp_path: Path) -> None:
     source = Path(os.environ["QFW_TEST_BB_HELPER"])
     fake = Path(os.environ["QFW_TEST_FAKE_DRIVER"])
     log = tmp_path / "calls"
     reserve = command(source, fake, tmp_path, "reserve")
 
     assert run(reserve, log).returncode == 0
-    context = next((tmp_path / "state").glob("*.env"))
-    assert context.read_text() == (
-        'QFW_RESERVATIONS=[["nwqsim-site","41"]]\n'
-    )
-    paths = command(source, fake, tmp_path, "paths")
-    path_file = tmp_path / "environment"
-    paths.extend(["--path-file", str(path_file)])
-    assert run(paths, log).returncode == 0
-    assert path_file.read_text() == (
-        'QFW_RESERVATIONS=[["nwqsim-site","41"]]\n'
-    )
+    assert list((tmp_path / "state").glob("*.env")) == []
+    state = json.loads(next((tmp_path / "state").glob("*.json")).read_text())
+    assert state["reservations"] == [["nwqsim-site", "41"]]
     release = command(source, fake, tmp_path, "release")
     assert run(release, log).returncode == 0
     state = json.loads(next((tmp_path / "state").iterdir()).read_text())

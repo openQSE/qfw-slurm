@@ -135,30 +135,6 @@ def write_state(path: Path, state: dict) -> None:
         raise
 
 
-def write_context(path: Path, reservations: list, job_id: int) -> None:
-    value = json.dumps(reservations, separators=(",", ":"))
-    targets = {path.with_suffix(".env")}
-    if str(job_id) != path.stem.rsplit("-", 1)[-1]:
-        targets.add(path.with_name(f"{path.stem.rsplit('-', 1)[0]}-{job_id}.env"))
-    for target in targets:
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{target.name}.", dir=target.parent
-        )
-        try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(f"QFW_RESERVATIONS={value}\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, target)
-        except BaseException:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-            raise
-
-
 def read_state(path: Path) -> dict:
     try:
         metadata = path.stat()
@@ -311,7 +287,6 @@ def reservation(args, path: Path, directive: dict[str, str]) -> int:
             write_state(
                 state_path(args.state_dir, args.cluster, args.job_id), record
             )
-        write_context(path, reservations, args.job_id)
         return EXIT_OK
     write_state(path, record)
     if state == "delayed":
@@ -361,24 +336,15 @@ def release(args, path: Path) -> int:
     return EXIT_OK
 
 
-def render_paths(args, path: Path) -> int:
-    current = read_state(path)
-    if current.get("state") != "reservation-accepted":
-        raise HelperError("allocation has no accepted QPM reservation")
-    value = json.dumps(current.get("reservations"), separators=(",", ":"))
-    target = Path(args.path_file)
-    target.write_text(f"QFW_RESERVATIONS={value}\n", encoding="utf-8")
-    return EXIT_OK
-
-
 def parser() -> argparse.ArgumentParser:
     output = argparse.ArgumentParser(prog="qfw-slurm-bb")
-    output.add_argument("operation", choices=("evaluate", "reserve", "paths", "release", "status"))
+    output.add_argument(
+        "operation", choices=("evaluate", "reserve", "release", "status")
+    )
     output.add_argument("--driver", type=Path, default=Path("/usr/bin/qfw-slurm-driver"))
     output.add_argument("--plugin-config", type=Path, default=Path("/etc/qfw-slurm/plugin.conf"))
     output.add_argument("--state-dir", type=Path, default=Path("/var/lib/qfw-slurm/allocations"))
     output.add_argument("--job-script", type=Path)
-    output.add_argument("--path-file", type=Path)
     output.add_argument("--cluster", default="auto")
     output.add_argument("--job-id", required=True, type=int)
     output.add_argument("--canonical-job-id", required=True, type=int)
@@ -405,10 +371,6 @@ def main() -> int:
         if args.operation == "status":
             print(json.dumps(read_state(path), sort_keys=True))
             return EXIT_OK
-        if args.operation == "paths":
-            if args.path_file is None:
-                raise HelperError("--path-file is required")
-            return render_paths(args, path)
         if args.operation == "release":
             return release(args, path)
         if args.job_script is None:
