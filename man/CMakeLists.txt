@@ -1,6 +1,7 @@
 set(QFW_SLURM_MAN1_PAGES
 	man1/qfw-slurm-driver.1
 	man1/qfw-sinfo.1
+	man1/qfw-squeue.1
 	man1/qfw_slurm_install.sh.1)
 
 set(QFW_SLURM_MAN5_PAGES

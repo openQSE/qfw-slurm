@@ -25,6 +25,7 @@ a configured Slurm cluster.
 | Goal | Recipe |
 | --- | --- |
 | Compare QPM state with its Slurm service hosts | [Inspect QPM services](inspect-qpm-services.md) |
+| Correlate active Slurm jobs with QPM allocations | [Inspect hybrid allocations](inspect-hybrid-allocations.md) |
 
 Recipes provide complete procedures. Command options and lifecycle contracts
 are maintained in the installed manual pages:
@@ -32,6 +33,7 @@ are maintained in the installed manual pages:
 ```bash
 man 1 qfw-slurm-driver
 man 1 qfw-sinfo
+man 1 qfw-squeue
 man 1 qfw_slurm_install.sh
 man 8 qfw-slurm-gateway
 man 8 qfw-slurm-gateway-launch

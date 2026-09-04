@@ -59,7 +59,10 @@ class SlurmJsonClient:
         rows = payload.get("jobs")
         if not isinstance(rows, list):
             raise SlurmCommandError("squeue JSON response lacks a jobs list")
-        return [_job(row) for row in rows]
+        cluster_name = str(
+            _nested(payload, "meta", "slurm", "cluster") or ""
+        )
+        return [_job(row, cluster_name) for row in rows]
 
     def _run(self, command: str, *arguments: str) -> dict[str, Any]:
         invocation = [command, *arguments, "--json"]
@@ -97,7 +100,7 @@ class SlurmJsonClient:
         return payload
 
 
-def _job(row: Any) -> SlurmJob:
+def _job(row: Any, default_cluster: str = "") -> SlurmJob:
     if not isinstance(row, dict):
         raise SlurmCommandError("squeue JSON contains a malformed job")
     job_id = _identifier(row.get("job_id"))
@@ -106,7 +109,7 @@ def _job(row: Any) -> SlurmJob:
     user = str(row.get("user_name") or row.get("user") or "")
     state = _first_text(row.get("job_state"), "UNKNOWN")
     nodes = tuple(_texts(row.get("nodes")))
-    heterogeneous_id = _identifier(
+    heterogeneous_id = _optional_identifier(
         row.get("het_job_id") or row.get("heterogeneous_job_id")
     )
     offset = row.get("het_job_offset", row.get("heterogeneous_job_offset"))
@@ -121,7 +124,7 @@ def _job(row: Any) -> SlurmJob:
         user=user,
         state=state,
         nodes=nodes,
-        cluster_name=str(row.get("cluster") or ""),
+        cluster_name=str(row.get("cluster") or default_cluster),
         heterogeneous_job_id=heterogeneous_id,
         heterogeneous_job_offset=offset,
     )
@@ -129,10 +132,15 @@ def _job(row: Any) -> SlurmJob:
 
 def _identifier(value: Any) -> str:
     if isinstance(value, dict):
-        value = value.get("number") or value.get("set")
+        value = value.get("number")
     if value is None:
         return ""
     return str(value)
+
+
+def _optional_identifier(value: Any) -> str:
+    identifier = _identifier(value)
+    return "" if identifier in {"", "0"} else identifier
 
 
 def _nested(mapping: dict[str, Any], *path: str) -> Any:

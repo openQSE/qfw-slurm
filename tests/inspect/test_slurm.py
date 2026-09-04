@@ -42,6 +42,7 @@ def test_normalizes_current_sinfo_schema() -> None:
 def test_normalizes_heterogeneous_squeue_job() -> None:
     client = SlurmJsonClient(2, _runner({
         "errors": [],
+        "meta": {"slurm": {"cluster": "qfw-cluster"}},
         "jobs": [{
             "job_id": 42,
             "user_name": "user-a",
@@ -58,6 +59,28 @@ def test_normalizes_heterogeneous_squeue_job() -> None:
     assert jobs[0].heterogeneous_job_id == "40"
     assert jobs[0].heterogeneous_job_offset == 1
     assert jobs[0].nodes == ("c1",)
+    assert jobs[0].cluster_name == "qfw-cluster"
+
+
+def test_ignores_unset_heterogeneous_job_metadata() -> None:
+    client = SlurmJsonClient(2, _runner({
+        "errors": [],
+        "jobs": [{
+            "job_id": 42,
+            "user_name": "user-a",
+            "job_state": ["RUNNING"],
+            "nodes": "c1",
+            "het_job_id": {"set": True, "infinite": False, "number": 0},
+            "het_job_offset": {
+                "set": True, "infinite": False, "number": 0
+            },
+        }],
+    }))
+
+    jobs = client.jobs()
+
+    assert jobs[0].job_id == "42"
+    assert jobs[0].heterogeneous_job_id == ""
 
 
 def test_rejects_command_errors() -> None:

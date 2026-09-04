@@ -1,0 +1,57 @@
+.TH QFW-SQUEUE 1 "September 2026" "qfw-slurm 0.1.0" "User Commands"
+.SH NAME
+qfw-squeue \- show Slurm jobs with sanitized QPM allocation state
+.SH SYNOPSIS
+.B qfw-squeue
+.RI [ options ]
+.SH DESCRIPTION
+.B qfw-squeue
+connects to the QFw site directory as a DEFw client, reads sanitized scheduler
+allocation summaries from registered QPM services, and correlates them with
+.BR squeue (1)
+JSON output.
+Ordinary and heterogeneous components are grouped by their canonical Slurm
+allocation identity.
+.SH OPTIONS
+.TP
+.BI \-\-job " job-id"
+Show one canonical Slurm allocation.
+.TP
+.BI \-\-user " username"
+Show allocations owned by one user.
+.TP
+.B \-\-json
+Write a versioned JSON object instead of the terminal table.
+.TP
+.BI \-\-site-config " path"
+Use the named QFw site configuration.
+.TP
+.BI \-\-timeout " seconds"
+Bound each required data-source operation.  The default is 10 seconds.
+.SH QUANTUM STATES
+EVALUATING identifies a pending Slurm job without an accepted QPM reservation.
+ACCEPTED identifies a pending job with a QPM reservation.  ACTIVE identifies a
+running job with one or more live QPM reservations.  RELEASING identifies a
+completing job whose QPM reservation is still visible.  UNAVAILABLE identifies
+an active job without matching live QPM telemetry.
+.PP
+Released and rejected jobs are absent from the live Slurm queue or the live QPM
+reservation store.  Historical terminal status belongs in a future accounting
+view rather than this command.
+.SH SECURITY
+The command uses the QPM sanitized telemetry interface.  It does not display
+reservation identifiers, application authorization material, or provider
+credentials.
+.SH EXIT STATUS
+Zero indicates complete output.  One indicates partial output caused by a
+failed required data source.  Two indicates invalid command syntax.
+.SH EXAMPLES
+.nf
+qfw-squeue
+qfw-squeue --user user-a
+qfw-squeue --job 42 --json
+.fi
+.SH SEE ALSO
+.BR squeue (1),
+.BR qfw-sinfo (1),
+.BR qfw-slurm (7)

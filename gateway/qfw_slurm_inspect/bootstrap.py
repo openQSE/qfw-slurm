@@ -15,7 +15,17 @@ class InspectionBootstrapError(RuntimeError):
 def sinfo_main() -> int:
     """Launch qfw-sinfo beneath the activated DEFw runtime."""
 
-    return _launch("qfw-sinfo", "qfw_slurm_inspect.sinfo")
+    return _launch(
+        "qfw-sinfo", "qfw_slurm_inspect.sinfo", "qfw_slurm_inspect.sinfo"
+    )
+
+
+def squeue_main() -> int:
+    """Launch qfw-squeue beneath the activated DEFw runtime."""
+
+    return _launch(
+        "qfw-squeue", "qfw_slurm_inspect.squeue", "qfw_slurm_inspect.squeue"
+    )
 
 
 def finish_defw_command(status: int) -> None:
@@ -29,10 +39,12 @@ def finish_defw_command(status: int) -> None:
         raise SystemExit(status) from error
 
 
-def _launch(program: str, module: str) -> int:
+def _launch(program: str, module: str, help_module: str) -> int:
     if any(argument in {"-h", "--help"} for argument in sys.argv[1:]):
-        from .sinfo import main
-
+        if help_module.endswith(".sinfo"):
+            from .sinfo import main
+        else:
+            from .squeue import main
         return main(sys.argv[1:])
     try:
         site_path, directory = _directory_configuration(sys.argv[1:])

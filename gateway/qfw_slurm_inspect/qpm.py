@@ -17,6 +17,7 @@ class QPMInspectionClient:
     def __init__(self, directory: Any, defw_module: Any):
         self._directory = directory
         self._defw = defw_module
+        self.errors: list[str] = []
 
     @classmethod
     def connect(cls, timeout_seconds: float = 10.0) -> "QPMInspectionClient":
@@ -60,15 +61,17 @@ class QPMInspectionClient:
                     filters=filters or {}
                 )
             except Exception as error:
-                raise QPMInspectionError(
+                self.errors.append(
                     f"cannot inspect QPM {service_id!r}: {error}"
-                ) from error
+                )
+                continue
             if not isinstance(response, dict) or not isinstance(
                 response.get("allocations"), list
             ):
-                raise QPMInspectionError(
+                self.errors.append(
                     f"QPM {service_id!r} returned malformed telemetry"
                 )
+                continue
             allocations.extend(
                 _allocation(service_id, item)
                 for item in response["allocations"]
@@ -162,9 +165,9 @@ def _allocation(service_id: str, item: Any) -> QPMAllocation:
         allocation_id=str(item.get("allocation_id") or ""),
         job_id=str(item.get("job_id") or ""),
         user=str(item.get("user") or ""),
-        state=str(item.get("state") or "UNKNOWN").upper(),
-        active_tasks=int(item.get("active_tasks") or 0),
+        state=str(item.get("qstate") or item.get("state") or "UNKNOWN").upper(),
+        active_tasks=int(item.get("active_task_count") or 0),
         workload_kind=str(item.get("workload_kind") or ""),
-        created_ns=item.get("created_ns"),
-        updated_ns=item.get("updated_ns"),
+        created_ns=item.get("created_at_ns"),
+        updated_ns=item.get("updated_at_ns"),
     )

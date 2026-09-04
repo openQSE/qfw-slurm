@@ -57,6 +57,7 @@ set(man_root
 foreach(man_page
 		man1/qfw-slurm-driver.1
 		man1/qfw-sinfo.1
+		man1/qfw-squeue.1
 		man1/qfw_slurm_install.sh.1
 		man5/qfw-slurm-burst-buffer.conf.5
 		man5/qfw-slurm-gateway.yaml.5
