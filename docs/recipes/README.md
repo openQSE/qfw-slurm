@@ -20,11 +20,18 @@ a configured Slurm cluster.
 | Exercise the driver against a live DEFw directory and QPM | [Live gateway and QPM lifecycle](test-live-gateway-driver.md) |
 | Validate allocation-time admission, application context, and teardown | [Live Slurm integration](test-spank-integration.md) |
 
+## Operations
+
+| Goal | Recipe |
+| --- | --- |
+| Compare QPM state with its Slurm service hosts | [Inspect QPM services](inspect-qpm-services.md) |
+
 Recipes provide complete procedures. Command options and lifecycle contracts
 are maintained in the installed manual pages:
 
 ```bash
 man 1 qfw-slurm-driver
+man 1 qfw-sinfo
 man 1 qfw_slurm_install.sh
 man 8 qfw-slurm-gateway
 man 8 qfw-slurm-gateway-launch

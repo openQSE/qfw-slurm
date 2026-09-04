@@ -14,6 +14,7 @@ dependencies = ["PyYAML>=6"]
 [project.scripts]
 qfw-slurm-gateway = "qfw_slurm_gateway.__main__:main"
 qfw-slurm-gateway-launch = "qfw_slurm_gateway.launcher:main"
+qfw-sinfo = "qfw_slurm_inspect.bootstrap:sinfo_main"
 
 [tool.setuptools]
 package-dir = {"" = "gateway"}
