@@ -81,6 +81,11 @@ def test_reserve_maps_trusted_slurm_metadata() -> None:
     assert admission.request["scope_id"] == "project:normal"
     assert admission.request["priority"] == 17
     assert admission.request["owner"]["user"] == "user-a"
+    assert admission.request["scheduler"] == "slurm"
+    assert admission.request["launcher"] == {
+        "scheduler": "slurm",
+        "cluster_name": "cluster",
+    }
 
 
 def test_evaluate_maps_metadata_without_reserving() -> None:

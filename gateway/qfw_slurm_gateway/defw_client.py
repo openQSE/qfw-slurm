@@ -175,6 +175,11 @@ class QFwAdapter:
         return {
             "request_id": request.request_id,
             "owner": {"user": job.username, "uid": job.uid, "gid": job.gid},
+            "scheduler": "slurm",
+            "launcher": {
+                "scheduler": "slurm",
+                "cluster_name": request.cluster_name,
+            },
             "job_id": str(request.canonical_job_id),
             "allocation_id": (
                 f"{request.cluster_name}:{request.canonical_job_id}"
