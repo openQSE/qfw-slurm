@@ -2,169 +2,166 @@
 
 ## Scope
 
-This report evaluates the implementation of
-`docs/detailed-design-workflow.md` on the virtual Slurm cluster. All source
-changes are confined to the `qfw-slurm` repository. The validation used the
-site-owned DEFw directory service and long-running NWQSim QPM already available
-in the cluster. It did not change QFw, DEFw, the Slurm cluster repository, or
-hardware credential files.
+This report evaluates the allocation workflow described by
+`docs/detailed-design-workflow.md`, including the gateway-only
+`QFW_GW_GET_RESERVATIONS` handoff. Validation used Slurm 25.05.0, MUNGE,
+the site-owned DEFw directory service, and a long-running NWQSim QPM in the
+virtual QFw Slurm cluster. No real-IQM request was submitted and no provider
+credential was read, copied, printed, or changed.
 
-The implementation was validated on 2026-09-02 against Slurm 25.05.0. The
-running container image was `qfw-slurm-cluster-doug:dougv01`, container ID
-`0047f5d24866`. Compute nodes exposed four CPUs each and the normal partition
-used `select/cons_tres` with exclusive node sharing.
+The final validation image was `qfw-slurm-cluster-doug:dougv01`, image ID
+`sha256:b6105dd1dff2896dfa7e63207506e40ce55b4077a6b7c645d6fa37ccd1240dbf`.
+It built QFw commit `84e006bd9ec7de48886ed2a3e029e15fc190cd83`
+and qfw-slurm commit `e996716eed2009a9110d029103c0c3002ed6a066`
+from their upstream `release/v0.1` branches. The tested qfw-slurm runtime
+implementation is `8ddf202dd86041a7f7286fc9099f54dd9736dc14`; subsequent
+qfw-slurm commits install the license and update documentation without
+changing that runtime.
+
+The checklist audit preserved these starting repository states:
+
+| Repository | Starting release commit |
+| --- | --- |
+| qfw-slurm | `cf708c5a324c624f2ed060cafe182f57c17346a2` |
+| QFw-SLURM-Cluster | `4206ad028acf8df4c8749b513ef0fa9336cd5f75` plus the validated integration refinements later amended into that commit |
+| QFw | `90d245ca9f42d44d50803a8cd9a3245199a69fc1` |
+
+The published release implementation references after validation are
+`8ddf202dd86041a7f7286fc9099f54dd9736dc14` for qfw-slurm,
+`bf2533de7a9d30bf4a7ec39fee5cbde71dbd837f` for QFw-SLURM-Cluster,
+and `84e006bd9ec7de48886ed2a3e029e15fc190cd83` for QFw. The final
+qfw-slurm documentation commit follows the implementation reference without
+changing installed runtime code.
 
 ## Implemented Workflow
 
-The completed qfw-slurm path has the following behavior.
+The completed path has these boundaries.
 
-1. Allocator SPANK options are accepted by `salloc` and `sbatch` only.
-2. `job_submit.lua` validates the option metadata, maps public QPU names to
-   exact QPM service IDs, and produces a bounded internal directive without
-   network I/O.
-3. `burst_buffer.lua` performs non-binding evaluation before node assignment.
-   Slurm owns the polling loop.
-4. Pre-run performs one final reservation attempt after all classical nodes
-   are assigned. A delayed result returns the nodes and retries the allocation.
-5. A protected SlurmUser-owned state record stores the accepted reservation
-   tuples. Remote SPANK reads that record and injects `QFW_RESERVATIONS`; it
-   performs no gateway or reservation operation.
-6. Burst-buffer teardown performs best-effort allocation-wide release. It can
-   recover through the gateway journal when accepted local state is missing.
-7. Final reservation attempts are bounded. Exhaustion becomes a permanent
-   rejection instead of cycling indefinitely.
-8. Heterogeneous component aliases resolve to the canonical allocation ID for
-   release, so teardown cannot target the wrong Slurm job.
+1. `salloc` and `sbatch` accept bounded quantum requirements. `srun` does not.
+2. `job_submit.lua` validates metadata and maps each public QPU name to one
+   exact QPM service ID without network traffic.
+3. Slurm repeatedly invokes non-binding evaluation through
+   `burst_buffer.lua`. Each invocation produces one gateway request and one
+   QPM evaluation; the gateway does not poll.
+4. After classical nodes are selected, pre-run makes the final reservation.
+   Delay returns the nodes and retries; acceptance is written to the gateway's
+   protected SQLite journal.
+5. Remote SPANK sends `QFW_GW_GET_RESERVATIONS` with its observed job identity.
+   The gateway authenticates MUNGE, verifies the owner and active job through
+   Slurm, canonicalizes heterogeneous component IDs, and reads only the
+   journal.
+6. Remote SPANK injects the returned compact tuple JSON into
+   `QFW_RESERVATIONS`. It never evaluates, reserves, extends, releases, or
+   contacts the directory service or QPM.
+7. Burst-buffer teardown attempts allocation-wide release and returns control
+   to Slurm even when provider cleanup needs later operator recovery.
 
-QSGP now has a distinct `QFW_GW_EVALUATE` operation. The gateway calls the QPM
-for every evaluation request and never polls independently. Delayed evaluation
-is nonterminal. The gateway normalizes the QPM admission API's zero
-reservation sentinel as no reservation and rejects any nonzero reservation ID
-from evaluation.
-
-The old controller epilog executable and its installation, manuals, and
-recipes were removed. Burst-buffer teardown is the only supported allocation
-release path.
+The gateway journal and burst-buffer retry records are controller-local.
+Compute nodes contain the protected plugin configuration needed to contact the
+gateway, but they do not contain or mount either state directory. QFw may
+separately use shared storage for its directory connection record or a PRTE
+DVM URI; those artifacts are not the qfw-slurm reservation handoff.
 
 ## Automated Validation
 
-A clean CMake build completed with `-Wall -Wextra -Werror -Wpedantic`. The
-installed-tree smoke test also passed after removal of the epilog and addition
-of the lifecycle configuration and manuals.
+A clean, read-only source mount was built inside the release image with
+`-Wall`, `-Wextra`, `-Werror`, and `-Wpedantic`. All ten CTest entries passed.
 
-| Test boundary | Result | Coverage |
+| Test | Result | Principal coverage |
 | --- | --- | --- |
-| QSGP native protocol | Passed | Evaluation, reserve, release, bounds, malformed messages, and interoperation |
-| Native operation layer | Passed | Request IDs, response classification, canonical reservation JSON, and errors |
-| Native gateway client | Passed | MUNGE framing, correlation, deadlines, and peer validation |
-| Gateway Python suite | Passed | Authentication, Slurm verification, journal recovery, evaluation, reserve, rollback, and release |
-| Burst-buffer helper suite | Passed | Classical-wait state, repeated evaluation, accepted reserve, delayed final reserve, bounded exhaustion, missing-state release, and heterogeneous release |
-| Job-submit and burst-buffer Lua tests | Passed in `slurmctld` | Option translation, helper status mapping, heterogeneous metadata, and long job scripts |
-| Installed-tree smoke test | Passed | Commands, plugin, Lua files, examples, systemd unit, configuration, and manuals |
+| `job_submit_lua` | Passed | Allocator metadata, resource mapping, malformed input |
+| `burst_buffer_lua` | Passed | Stage-in, pre-run, teardown, heterogeneous metadata |
+| `qsgp_protocol` | Passed | All QSGP messages, bounds, malformed frames, C/Python interoperation |
+| `qfw_native` | Passed | Shared operations and canonical tuple JSON |
+| `gateway_client` | Passed | MUNGE framing, peer identity, deadlines, correlation |
+| `driver_cli` | Passed | Evaluate, reserve, lookup, release, and diagnostics |
+| `qfw_gateway` | Passed | Slurm verification, journal lookup, authorization, replay, rollback |
+| `qfw_slurm_bb_helper` | Passed | Controller state, delay, retry exhaustion, release recovery |
+| `driver_gateway_system` | Passed | Native client to authenticated Python gateway lifecycle |
+| `qfw_slurm_install_tree_smoke` | Passed | Installed commands, plugin, Lua, manuals, configuration, license |
 
-The local deterministic driver/gateway CTest was skipped because the host did
-not have a running MUNGE service. Its native-to-gateway path and MUNGE identity
-checks were exercised inside the live Slurm cluster instead.
+The suite was also run from a read-only source mount. Removing test-time
+`chmod()` calls from already-executable fixtures prevents tests from mutating
+the checkout.
 
 ## Live Cluster Results
 
-The following tests used real Slurm scheduling and callback placement. A
-deterministic gateway was used only where a repeatable admission policy was
-needed. The normal application tests used the production gateway, DEFw
-directory service, and long-running NWQSim QPM.
+### Fresh final image
+
+The recreated cluster advertised four CPUs on every four-CPU compute
+container, used `select/cons_tres` with exclusive nodes, loaded
+`job_submit/lua`, `burst_buffer/lua`, and `spank_quantum.so`, and validated one
+MUNGE credential across every node. Controller state paths were absent on all
+eight compute nodes.
+
+The root-owned directory service ran on `slurmctld`. The site-owned NWQSim QPM
+and PRTE DVM ran on c5. The QPM process remained PID 294 across the application
+tests.
 
 | Scenario | Evidence | Result |
 | --- | --- | --- |
-| Normal allocation, production gateway and NWQSim | Job 81 ran `test_qiskit_simple.py` through `qfw-srun`; NWQSim returned 1,024-shot GHZ counts; reservation 14 became `released` | Passed |
-| Classical nodes unavailable | Job 78 occupied c1-c4. Job 79 remained `PENDING (Resources)` with no node, `evaluation-accepted`, zero reservation attempts, and no reservation tuple. After job 78 was canceled, job 79 ran on c1, received reservation 12, and released it | Passed |
-| Two jobs competing for one QPM slot | Deterministic capacity-one jobs 67 and 68 both evaluated positively. Job 67 ran with reservation 41. Job 68 returned its node after each delayed final reserve | Passed |
-| Final-reservation retry exhaustion | Job 68 made two configured final attempts, remained pending without a node after each delay, then became `CANCELLED by 990` with `reservation-exhausted` | Passed |
-| Permanent preliminary rejection | Deterministic job 59 became terminal without an assigned node or QPM reservation | Passed |
-| Allocator-only option enforcement | `srun --qpu=nwqsim ...` failed as an unrecognized option | Passed |
-| Heterogeneous application in group 0 | Job 60 exported one canonical reservation set to the application group | Passed |
-| Heterogeneous application in group 1 | Jobs 75/76 allocated c1/c2; group 1 received `[["nwqsim-site","10"]]`; both canonical and component state records became `released` | Passed |
-| Repeated application context | Two steps in one accepted allocation received the same canonical tuple without another gateway reservation | Passed |
-| Cancellation after acceptance | Canceling job 67 invoked teardown and changed its accepted state to `released` | Passed |
+| Normal allocation | user-a job 1 received `[["nwqsim","1"]]`; the three-qubit Qiskit example returned 1,024 shots and `status: ok`; journal state became `released` | Passed |
+| Heterogeneous allocation | user-b canonical job 2 placed quantum metadata on group 0; groups 0 and 1 both received `[["nwqsim","2"]]`; the three-qubit example returned 1,024 shots; journal state became `released` | Passed |
+| Additional non-root user | user-c job 4 received `[["nwqsim","3"]]`, completed the three-qubit example with `status: ok`, and released reservation 3 | Passed |
+| Login and filesystem isolation | user-a, user-b, and user-c received private mode-0700 homes and per-user run roots; compute nodes had no controller qfw-slurm state paths | Passed |
 
-The classical-starvation test directly confirms the main scheduling goal. A
-positive QPM evaluation does not hold quantum capacity while Slurm waits for
-classical resources. The final reservation is created only after a classical
-node is selected.
+### Failure and race scenarios
 
-The contention test confirms the expected optimistic race. More than one job
-may evaluate positively. Only one can acquire the emulated capacity during
-final reserve. The losing job does not keep its classical node while waiting.
+The following cases were exercised against the same implementation before the
+final image-only directory-placement refinement.
 
-## Evaluation and Findings
+| Scenario | Evidence | Result |
+| --- | --- | --- |
+| Classical nodes unavailable | A four-node blocker occupied c1-c4. The competing quantum job remained pending without an assigned node and gateway status was `not-found`, proving that no final reservation existed | Passed |
+| Repeated steps | Two `srun` steps in user-b job 2 both received `[["nwqsim","2"]]`; no second QPM reservation was created | Passed |
+| Gateway outage and recovery | The gateway and supervisor were stopped after user-a job 9 had reservation 6. The first step failed closed. After restart, a later step in the same allocation received `[["nwqsim","6"]]` | Passed |
+| Owner authorization | A MUNGE-authenticated lookup for active user-a job 10 that claimed user-b UID/GID failed with `request identity differs from Slurm`; the correct owner succeeded | Passed |
+| Released and unknown jobs | Lookup after job 10 cancellation failed because Slurm reported `CANCELLED`; job 999999 failed as unknown; reservation 7 was journaled as `released` | Passed |
+| Cancellation | Canceling an accepted allocation invoked best-effort teardown and produced terminal released journal state | Passed |
+| Capacity-one competition | Deterministic live-Slurm validation admitted one competing job, returned the losing job's node after delayed final reserve, and terminated it after the configured retry bound | Passed |
+| Permanent deterministic rejection | The deterministic admission adapter rejected the allocation before application execution | Passed |
 
-### Slurm 25.05 callback ordering
+## Findings
 
-Source inspection and live testing showed that Slurm calls
-`slurm_bb_paths` before asynchronous `slurm_bb_pre_run`. Therefore the paths
-hook cannot export a reservation created during pre-run. The implementation
-uses a narrowly scoped remote SPANK callback to read protected accepted state
-and inject the application environment. It does not restore the retired
-step-time reservation workflow.
+### Oversized NWQSim requests are not structured permanent decisions
 
-### Heterogeneous teardown identity
+An oversized live NWQSim request reached qhw-admission, which raised an
+`AdmissionError` through DEFw instead of returning a structured permanent
+rejection. qfw-slurm therefore treated the failure as retryable. It created no
+reservation, returned the selected node, and left termination to the bounded
+final-reservation attempt policy.
 
-Slurm invokes teardown using the heterogeneous component job ID. The gateway
-journal is keyed by the canonical heterogeneous job ID. The initial helper
-used the component ID for release, which the gateway correctly rejected. The
-fixed helper reads the canonical ID from the protected alias before issuing
-release and writes the result to both records. The repeated group-1 test
-verified this behavior.
+The deterministic gateway test proves qfw-slurm's permanent-rejection mapping,
+but the live provider boundary cannot distinguish this admission error from a
+temporary QPM failure until QPMd returns a structured rejection. This is an
+upstream QPM admission-contract issue, not a reason to guess permanence in the
+gateway.
 
-### QPM evaluation sentinel
+### Heterogeneous identity is canonicalized by the gateway
 
-The current QPM admission binding returns `reservation_id: 0` for a
-non-binding evaluation. Zero is the C API's absent-ID sentinel, not a valid
-reservation. Treating it as an allocated ID caused an unnecessary operational
-retry. The gateway now accepts zero as absent while continuing to reject every
-nonzero evaluation reservation ID.
+Slurm exposes a component job ID to each remote callback. The lookup verifier
+queries Slurm and maps that observed ID to the canonical heterogeneous job ID.
+Both components consequently retrieve the same journal row and tuple set.
+Controller-local component records are used only for Slurm callback retry and
+release bookkeeping.
 
-### Cluster image prerequisites
+### Shared storage is not used for reservation delivery
 
-The running image had Lua and MUNGE runtime support after provisioning, but it
-did not originally contain Slurm's `job_submit/lua` and `burst_buffer/lua`
-shared objects. For validation, those plugins were built from the exact
-`slurm-25-05-0-1` source tag and installed transiently. Building from a newer
-Slurm source revision produced an ABI/version mismatch and was rejected.
-
-A reproducible cluster image must build or package both Lua plugins against
-the exact installed Slurm version. This is a cluster packaging task and was
-not committed here because this change set is intentionally confined to
-qfw-slurm.
-
-### QFw example wrapper behavior
-
-The low-level QFw example application consumed the plugin-created reservation
-and passed. The higher-level `qfw_qiskit_simple.sh` wrapper also passed, but its
-development `qfw_slurm_driver.sh` path created and released a second
-application reservation. That wrapper therefore validates QFw compatibility,
-not exclusive use of the allocation reservation.
-
-Changing the QFw example wrappers to reuse an existing
-`QFW_RESERVATIONS` value belongs in QFw and was outside the repository boundary
-for this implementation. Until that change is made, the authoritative plugin
-workflow test is `qfw-setup`, followed by `qfw-srun` of the example Python
-application, followed by `qfw-teardown`.
+The earlier accepted-state `.env` files and component aliases were removed.
+No remote code opens controller reservation state. The fresh image creates the
+gateway journal, logs, and burst-buffer retry directory only in the
+`slurmctld` entrypoint, and none of those paths exists on compute nodes.
 
 ## Coverage Not Claimed
 
-The following design-matrix cases were not run against live Slurm in this
-iteration.
+- A live allocation spanning more than one QPM. Atomic rollback is covered by
+  gateway tests, while the cluster exposes only one NWQSim site service.
+- A guarded real-IQM hardware submission. This validation intentionally used
+  no hardware credential.
+- Expiration after a gateway and QPM remain unreachable beyond the allocation
+  lifetime.
+- The full QFw example matrix. The final gate used the short Qiskit example in
+  normal and heterogeneous placements.
 
-- A multi-QPM allocation with partial final rollback. The gateway unit suite
-  covers atomic rollback, but only one live QPM service was provisioned.
-- Gateway loss during every individual Slurm phase. Transport and release
-  failures are covered below the live scheduler boundary.
-- Reservation expiration after a permanently unreachable gateway or QPM.
-- A real-IQM hardware submission. No hardware authorization was inferred from
-  the request to test on the Slurm cluster, and no credential file was read.
-- The complete QFw simulator example matrix. One direct Qiskit/NWQSim
-  application and the existing wrapper were run.
-
-These omissions do not invalidate the two requested corner cases or the
-implemented allocation lifecycle. They remain explicit operational validation
-work before declaring the complete production matrix finished.
+These are explicit future operational tests. They do not change the validated
+gateway-only reservation lookup or the no-shared-state contract.
