@@ -41,9 +41,10 @@ cd "${QFW_SLURM_SRC}"
 ```
 
 The script delegates the native build and installation to CMake, then installs
-the gateway wheel into the explicitly selected Python environment. Run it with
-`--without-plugin` on a development host that lacks Slurm headers. That mode
-installs the driver and lifecycle helper but omits SPANK.
+the gateway and inspection clients into the explicitly selected Python
+environment. Run it with `--without-plugin` on a development host that lacks
+Slurm headers. That mode installs the driver and lifecycle helper but omits
+SPANK.
 
 The installation does not edit `/etc/slurm`, create service accounts, or start
 the gateway. Those remain site-administrator operations.
@@ -59,9 +60,15 @@ find "${QFW_SLURM_PREFIX}" -name spank_quantum.so -print -quit |
   grep -q .
 
 PYTHONPATH= python -c \
-  'import qfw_slurm_gateway; print(qfw_slurm_gateway.__file__)'
+  'import qfw_slurm_gateway, qfw_slurm_inspect'
+command -v qfw-sinfo
+command -v qfw-squeue
+qfw-sinfo --help >/dev/null
+qfw-squeue --help >/dev/null
 
 MANPATH="${QFW_SLURM_PREFIX}/share/man" man 7 qfw-slurm
+MANPATH="${QFW_SLURM_PREFIX}/share/man" man 1 qfw-sinfo
+MANPATH="${QFW_SLURM_PREFIX}/share/man" man 1 qfw-squeue
 ctest --test-dir "${QFW_SLURM_BUILD}" --output-on-failure
 ```
 

@@ -1,9 +1,9 @@
 # Install qfw-slurm in the Standard Site Location
 
 Use an immutable, versioned native prefix and publish it through a stable
-`current` link. This recipe uses `/opt/openqse/qfw-slurm/current`. The gateway
-Python package is installed into the version-matched QFw environment because
-it imports QFw and DEFw client modules.
+`current` link. This recipe uses `/opt/openqse/qfw-slurm/current`. The Python
+package is installed into the version-matched QFw environment. It supplies the
+gateway as well as the `qfw-sinfo` and `qfw-squeue` DEFw clients.
 
 The SPANK module must be compiled against the Slurm headers used by the target
 cluster. Install the native tree consistently on the controller and every
@@ -95,9 +95,15 @@ find -L "${QFW_SLURM_CURRENT}" -name spank_quantum.so -print -quit |
   grep -q .
 
 PYTHONPATH= python -c \
-  'import qfw_slurm_gateway; print(qfw_slurm_gateway.__file__)'
+  'import qfw_slurm_gateway, qfw_slurm_inspect'
+command -v qfw-sinfo
+command -v qfw-squeue
+qfw-sinfo --help >/dev/null
+qfw-squeue --help >/dev/null
 
 MANPATH="${QFW_SLURM_CURRENT}/share/man" man 1 qfw-slurm-driver
+MANPATH="${QFW_SLURM_CURRENT}/share/man" man 1 qfw-sinfo
+MANPATH="${QFW_SLURM_CURRENT}/share/man" man 1 qfw-squeue
 ctest --test-dir "${QFW_SLURM_BUILD}" --output-on-failure
 deactivate
 ```
