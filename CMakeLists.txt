@@ -185,6 +185,11 @@ if(QFW_SLURM_BUILD_TESTS)
 					QFW_TEST_FAKE_DRIVER=${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/fake_driver.py
 					${Python3_EXECUTABLE} -m pytest -q
 					${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_bb_helper.py)
+			add_test(NAME qfw_slurm_inspection
+				COMMAND ${CMAKE_COMMAND} -E env
+					PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/gateway
+					${Python3_EXECUTABLE} -m pytest -q
+					${CMAKE_CURRENT_SOURCE_DIR}/tests/inspect)
 		else()
 			message(STATUS
 				"Skipping gateway tests: pytest and PyYAML are required")
