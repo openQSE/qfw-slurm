@@ -7,6 +7,8 @@ import socket
 import sys
 from pathlib import Path
 
+from qfw_slurm_common import client_environment
+
 
 class InspectionBootstrapError(RuntimeError):
     """Raised when an inspection command cannot join DEFw."""
@@ -117,6 +119,7 @@ def _directory_environment(site_path: Path, directory: dict) -> dict[str, str]:
         "DEFW_PARENT_PORT": str(port),
         "DEFW_PARENT_NAME": name,
     }
+    environment.update(client_environment())
     connection_file = directory.get("connection_file")
     if connection_file:
         environment["QFW_DIRECTORY_SERVICE_INFO"] = str(connection_file)

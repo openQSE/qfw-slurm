@@ -8,6 +8,20 @@ import pytest
 from qfw_slurm_inspect import bootstrap
 
 
+def test_directory_environment_loads_only_directory_client_api(
+    tmp_path,
+) -> None:
+    environment = bootstrap._directory_environment(
+        tmp_path / "site.yaml",
+        {
+            "endpoint": "127.0.0.1:18090",
+            "name": "directory",
+        },
+    )
+
+    assert environment["DEFW_ONLY_LOAD_MODULE"] == "api_dirsvc"
+
+
 def test_finish_defw_command_preserves_status(monkeypatch) -> None:
     calls = []
 

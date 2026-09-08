@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from qfw_slurm_common import client_environment
+
 from .config import ConfigurationError, GatewayConfig, load_config
 
 
@@ -178,6 +180,7 @@ def directory_environment(site_config: Path) -> dict[str, str]:
         "DEFW_PARENT_PORT": str(port),
         "DEFW_PARENT_NAME": endpoint_name,
     }
+    environment.update(client_environment())
     if connection_path is not None:
         environment["QFW_DIRECTORY_SERVICE_INFO"] = str(connection_path)
     return environment

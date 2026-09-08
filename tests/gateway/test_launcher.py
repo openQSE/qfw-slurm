@@ -52,6 +52,7 @@ def test_connection_record_prepares_defw_parent(tmp_path, monkeypatch) -> None:
     assert environment["DEFW_PARENT_PORT"] == "18090"
     assert environment["DEFW_PARENT_NAME"] == "running-directory"
     assert environment["DEFW_DISABLE_DIRSVC"] == "no"
+    assert environment["DEFW_ONLY_LOAD_MODULE"] == "api_dirsvc"
     assert 0 < int(environment["DEFW_LISTEN_PORT"]) <= 65535
 
 
