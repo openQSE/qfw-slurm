@@ -66,8 +66,9 @@ class ManagedBinding:
         self.closed = False
         self.admission = Admission({"status": "accepted"})
 
-    def start(self, directory):
+    def start(self, directory=None):
         self.started_with = directory
+        self.current_directory = self.kwargs["directory_getter"]()
         return self
 
     def snapshot(self):
@@ -101,7 +102,6 @@ def test_resolve_reuses_one_managed_binding_per_service() -> None:
     directory = object()
     adapter = QFwAdapter("/site.yaml")
     adapter._defw = object()
-    adapter._directory = directory
     adapter._directory_getter = lambda: directory
     adapter._binding_factory = factory
 
@@ -112,7 +112,8 @@ def test_resolve_reuses_one_managed_binding_per_service() -> None:
     assert first.runtime_id == second.runtime_id == "runtime-a"
     assert first.generation == second.generation == 3
     assert len(created) == 1
-    assert created[0].started_with is directory
+    assert created[0].started_with is None
+    assert created[0].current_directory is directory
     assert created[0].closed is True
 
 

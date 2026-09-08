@@ -46,7 +46,6 @@ class QFwAdapter:
         self.activation = Path(activation) if activation else None
         self.venv = Path(venv) if venv else None
         self._defw = None
-        self._directory = None
         self._directory_getter = None
         self._binding_factory = None
         self._bindings: dict[str, Any] = {}
@@ -78,11 +77,8 @@ class QFwAdapter:
                 "QFw environment is not active for the gateway"
             ) from error
         try:
-            directory = defw_get_directory_service(
-                timeout=self.timeout_seconds
-            )
+            defw_get_directory_service(timeout=self.timeout_seconds)
             self._defw = defw
-            self._directory = directory
             self._directory_getter = lambda: getattr(defw, "dirsvc", None)
             self._binding_factory = QPMLifecycleBinding
         except Exception as error:
@@ -151,7 +147,7 @@ class QFwAdapter:
                 defw_module=self._defw,
                 recovery_timeout=self.timeout_seconds,
             )
-            binding.start(directory=self._directory)
+            binding.start()
             self._bindings[service_id] = binding
             return binding
 
