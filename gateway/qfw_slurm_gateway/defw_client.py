@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,12 @@ class QFwAdapter:
         self.timeout_seconds = timeout_seconds
         self.activation = Path(activation) if activation else None
         self.venv = Path(venv) if venv else None
-        self._resolver = None
+        self._defw = None
+        self._directory = None
+        self._directory_getter = None
+        self._binding_factory = None
+        self._bindings: dict[str, Any] = {}
+        self._bindings_lock = threading.Lock()
 
     def start(self) -> None:
         if not self.site_config.is_file():
@@ -65,8 +71,8 @@ class QFwAdapter:
         os.environ["QFW_SITE_CONFIG"] = str(self.site_config)
         try:
             import defw
+            from api_qpm_common import QPMLifecycleBinding
             from defw_app_util import defw_get_directory_service
-            from qfw_qiskit.qpm_resolver import QPMResolver
         except ImportError as error:
             raise QFwAdapterError(
                 "QFw environment is not active for the gateway"
@@ -75,51 +81,79 @@ class QFwAdapter:
             directory = defw_get_directory_service(
                 timeout=self.timeout_seconds
             )
-            self._resolver = QPMResolver.from_environment(
-                dirsvc=directory, defw_module=defw
-            )
+            self._defw = defw
+            self._directory = directory
+            self._directory_getter = lambda: getattr(defw, "dirsvc", None)
+            self._binding_factory = QPMLifecycleBinding
         except Exception as error:
             raise QFwAdapterError(
                 f"cannot connect to the DEFw directory service: {error}"
             ) from error
 
     def resolve(self, service_id: str) -> QPMBinding:
-        if self._resolver is None:
+        if self._binding_factory is None:
             raise QFwAdapterError("QFw adapter is not started")
         try:
-            resolved, admission = self._resolver.resolve_and_connect(
-                timeout=self.timeout_seconds,
-                service_id=service_id,
-                service_type="qfw.qpm",
-                api_category="admission",
-                binding_name="admission",
-            )
-            _control_resolved, control = self._resolver.resolve_and_connect(
-                timeout=self.timeout_seconds,
-                service_id=service_id,
-                service_type="qfw.qpm",
-                api_category="control",
-                binding_name="control",
+            lifecycle = self._managed_binding(service_id)
+            identity = lifecycle.snapshot()
+            if not identity.get("available") or not identity.get("runtime_id"):
+                raise QFwAdapterError(f"QPM {service_id!r} is unavailable")
+            runtime_id = str(identity["runtime_id"])
+            control = lifecycle.api(
+                "control", expected_runtime_id=runtime_id
             )
             readiness = control.is_ready()
             if not isinstance(readiness, dict) or not readiness.get("ready"):
                 raise QFwAdapterError(f"QPM {service_id!r} is not ready")
+            current = lifecycle.snapshot()
+            if (
+                not current.get("available")
+                or str(current.get("runtime_id")) != runtime_id
+            ):
+                raise QFwAdapterError(
+                    f"QPM {service_id!r} changed while checking readiness"
+                )
+            admission = lifecycle.api(
+                "admission", expected_runtime_id=runtime_id
+            )
         except QFwAdapterError:
             raise
         except Exception as error:
             raise QFwAdapterError(
                 f"cannot resolve QPM {service_id!r}: {error}"
             ) from error
-        if resolved.runtime_id is None or resolved.generation is None:
+        if current.get("generation") is None:
             raise QFwAdapterError(
                 f"QPM {service_id!r} lacks runtime identity or generation"
             )
         return QPMBinding(
             service_id=service_id,
-            runtime_id=str(resolved.runtime_id),
-            generation=int(resolved.generation),
+            runtime_id=runtime_id,
+            generation=int(current["generation"]),
             admission=admission,
         )
+
+    def close(self) -> None:
+        with self._bindings_lock:
+            bindings = list(self._bindings.values())
+            self._bindings.clear()
+        for binding in bindings:
+            binding.close()
+
+    def _managed_binding(self, service_id: str):
+        with self._bindings_lock:
+            binding = self._bindings.get(service_id)
+            if binding is not None:
+                return binding
+            binding = self._binding_factory(
+                service_id,
+                directory_getter=self._directory_getter,
+                defw_module=self._defw,
+                recovery_timeout=self.timeout_seconds,
+            )
+            binding.start(directory=self._directory)
+            self._bindings[service_id] = binding
+            return binding
 
     def reserve(
         self,

@@ -612,10 +612,7 @@ class GatewayService:
             )
         try:
             binding = await asyncio.to_thread(self.adapter.resolve, record.service_id)
-            if (
-                binding.runtime_id != record.qpm_runtime_id
-                or binding.generation != record.qpm_generation
-            ):
+            if binding.runtime_id != record.qpm_runtime_id:
                 state = ReservationState.STALE_RUNTIME
                 diagnostic = "QPM incarnation differs from reservation journal"
             else:

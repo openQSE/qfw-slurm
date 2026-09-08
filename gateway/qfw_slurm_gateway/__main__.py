@@ -86,6 +86,7 @@ async def _serve(config) -> None:
     finally:
         _notify_service_manager("STOPPING=1\nSTATUS=QSGP listener is stopping")
         await server.close()
+        adapter.close()
         journal.close()
 
 
@@ -119,6 +120,7 @@ async def _retry(config, args) -> dict:
         )
         return response_to_dict(response)
     finally:
+        adapter.close()
         journal.close()
 
 
@@ -144,6 +146,7 @@ async def _check(config, services: list[str]) -> dict:
             )
         return {"status": "ready", "services": resolved}
     finally:
+        adapter.close()
         journal.close()
 
 

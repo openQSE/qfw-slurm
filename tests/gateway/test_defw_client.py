@@ -58,6 +58,64 @@ class Admission:
         return {"status": "released"}
 
 
+class ManagedBinding:
+    def __init__(self, service_id, **kwargs):
+        self.service_id = service_id
+        self.kwargs = kwargs
+        self.started_with = None
+        self.closed = False
+        self.admission = Admission({"status": "accepted"})
+
+    def start(self, directory):
+        self.started_with = directory
+        return self
+
+    def snapshot(self):
+        return {
+            "available": True,
+            "runtime_id": "runtime-a",
+            "generation": 3,
+        }
+
+    def api(self, binding_name, expected_runtime_id=None):
+        assert expected_runtime_id == "runtime-a"
+        if binding_name == "control":
+            return type(
+                "Control", (), {"is_ready": lambda self: {"ready": True}}
+            )()
+        assert binding_name == "admission"
+        return self.admission
+
+    def close(self):
+        self.closed = True
+
+
+def test_resolve_reuses_one_managed_binding_per_service() -> None:
+    created = []
+
+    def factory(service_id, **kwargs):
+        binding = ManagedBinding(service_id, **kwargs)
+        created.append(binding)
+        return binding
+
+    directory = object()
+    adapter = QFwAdapter("/site.yaml")
+    adapter._defw = object()
+    adapter._directory = directory
+    adapter._directory_getter = lambda: directory
+    adapter._binding_factory = factory
+
+    first = adapter.resolve("nwqsim")
+    second = adapter.resolve("nwqsim")
+    adapter.close()
+
+    assert first.runtime_id == second.runtime_id == "runtime-a"
+    assert first.generation == second.generation == 3
+    assert len(created) == 1
+    assert created[0].started_with is directory
+    assert created[0].closed is True
+
+
 def test_reserve_maps_trusted_slurm_metadata() -> None:
     admission = Admission({"status": "accepted", "reservation_id": "41"})
     binding = QPMBinding("nwqsim", "runtime", 1, admission)

@@ -462,6 +462,32 @@ async def _release_rejects_stale_runtime_without_calling_qpm(tmp_path) -> None:
     journal.close()
 
 
+def test_release_preserves_reservation_across_directory_generation(
+    tmp_path,
+) -> None:
+    asyncio.run(_release_preserves_reservation_across_directory_generation(tmp_path))
+
+
+async def _release_preserves_reservation_across_directory_generation(
+    tmp_path,
+) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+    assert isinstance(await service.handle(request(), 1001), ReserveResponse)
+    adapter.generations["svc-a"] = ("runtime", 2)
+
+    response = await service.handle(ReleaseRequest(2, "cluster", 100, 3), 1001)
+
+    states = {item.service_id: item.state for item in response.results}
+    assert states == {
+        "svc-a": ReservationState.RELEASED,
+        "svc-b": ReservationState.RELEASED,
+    }
+    assert [item[0] for item in adapter.releases] == ["svc-a", "svc-b"]
+    journal.close()
+
+
 def test_release_failure_remains_nonterminal(tmp_path) -> None:
     asyncio.run(_release_failure_remains_nonterminal(tmp_path))
 
