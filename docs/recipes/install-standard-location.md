@@ -65,8 +65,15 @@ Migrate that layout during a maintenance window instead of overwriting it.
 ## 5. Continue with site configuration
 
 The installation includes protected configuration examples and a systemd unit
-but does not deploy them into `/etc` or start services. Locate the installed
-artifacts with:
+but does not deploy them into `/etc` or start services. The canonical
+qfw-slurm configuration root is `/etc/openqse/qfw-slurm`; Slurm-native files
+remain under `/etc/slurm`. Create the OpenQSE-owned root with:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/openqse/qfw-slurm
+```
+
+Locate the installed configuration examples with:
 
 ```bash
 find -L "${QFW_SLURM_CURRENT}" \

@@ -122,7 +122,7 @@ def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> Non
     )
 
     command = defwp_command(
-        config, ["--config", "/etc/qfw-slurm/gateway.yaml", "serve"]
+        config, ["--config", "/etc/openqse/qfw-slurm/gateway.yaml", "serve"]
     )
 
     assert command == [
@@ -130,6 +130,6 @@ def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> Non
         "-m",
         "qfw_slurm_gateway",
         "--config",
-        "/etc/qfw-slurm/gateway.yaml",
+        "/etc/openqse/qfw-slurm/gateway.yaml",
         "serve",
     ]

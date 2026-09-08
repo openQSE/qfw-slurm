@@ -1,5 +1,5 @@
 local settings_path = os.getenv("QFW_SLURM_BB_CONFIG") or
-	"/etc/qfw-slurm/burst-buffer.lua.conf"
+	"/etc/openqse/qfw-slurm/burst-buffer.lua.conf"
 local settings_stream = io.open(settings_path, "r")
 local settings = {}
 if settings_stream ~= nil then
@@ -11,7 +11,7 @@ local helper = os.getenv("QFW_SLURM_BB_HELPER") or settings.helper or
 local driver = os.getenv("QFW_SLURM_DRIVER") or settings.driver or
 	"/usr/bin/qfw-slurm-driver"
 local plugin_config = os.getenv("QFW_SLURM_PLUGIN_CONFIG") or
-	settings.plugin_config or "/etc/qfw-slurm/plugin.conf"
+	settings.plugin_config or "/etc/openqse/qfw-slurm/plugin.conf"
 local state_dir = os.getenv("QFW_SLURM_STATE_DIR") or settings.state_dir or
 	"/var/lib/qfw-slurm/allocations"
 local max_reservation_attempts = settings.max_reservation_attempts or 8

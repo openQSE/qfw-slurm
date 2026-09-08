@@ -17,7 +17,8 @@
 SPANK_PLUGIN(spank_quantum, 1)
 
 static struct qfw_quantum_options quantum_options;
-static char config_path[QFW_CONFIG_PATH_MAX] = "/etc/qfw-slurm/plugin.conf";
+static char config_path[QFW_CONFIG_PATH_MAX] =
+	"/etc/openqse/qfw-slurm/plugin.conf";
 
 static int parse_arguments(int argc, char **argv)
 {

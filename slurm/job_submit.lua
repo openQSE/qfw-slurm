@@ -1,6 +1,6 @@
 local option_prefix = "_SLURM_SPANK_OPTION_spank_quantum_"
 local resources_file = os.getenv("QFW_SLURM_RESOURCES_FILE") or
-	"/etc/qfw-slurm/resources.lua"
+	"/etc/openqse/qfw-slurm/resources.lua"
 local policy = dofile(resources_file)
 
 local option_names = {

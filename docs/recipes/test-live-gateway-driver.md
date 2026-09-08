@@ -10,8 +10,8 @@ Run `man 1 qfw-slurm-driver`, `man 8 qfw-slurm-gateway-launch`, and
 ## Prerequisites
 
 - MUNGE is running on the driver and gateway hosts.
-- `/etc/qfw-slurm/plugin.conf` maps `nwqsim` to the exact registered service ID.
-- `/etc/qfw-slurm/gateway.yaml` selects the active cluster and QFw site file.
+- `/etc/openqse/qfw-slurm/plugin.conf` maps `nwqsim` to the exact registered service ID.
+- `/etc/openqse/qfw-slurm/gateway.yaml` selects the active cluster and QFw site file.
 - The directory service, NWQSim QPM, and gateway report ready.
 
 Check the live dependencies from an activated QFw environment:
@@ -21,7 +21,7 @@ source /opt/openqse/qfw/bin/qfw-activate \
   --venv /opt/openqse/qfw-venv
 
 qfw-slurm-gateway-launch \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   check --service nwqsim-site
 ```
 
@@ -41,7 +41,7 @@ cluster_name="$(
 )"
 
 qfw-slurm-driver lifecycle \
-  --config /etc/qfw-slurm/plugin.conf \
+  --config /etc/openqse/qfw-slurm/plugin.conf \
   --cluster "${cluster_name}" \
   --job-id "${SLURM_JOB_ID}" \
   --uid "$(id -u)" \
@@ -70,7 +70,7 @@ exit
 ```bash
 job_id=12345  # Replace with the copied job ID.
 qfw-slurm-gateway \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   status "${job_id}"
 ```
 

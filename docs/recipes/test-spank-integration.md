@@ -11,12 +11,12 @@ states and recovery behavior.
 - Slurm loads `spank_quantum.so` through `PlugStackConfig`.
 - `JobSubmitPlugins=lua` loads qfw-slurm's `job_submit.lua`.
 - `BurstBufferType=burst_buffer/lua` loads qfw-slurm's `burst_buffer.lua`.
-- `/etc/qfw-slurm/resources.lua`, `plugin.conf`, and
+- `/etc/openqse/qfw-slurm/resources.lua`, `plugin.conf`, and
   `burst-buffer.lua.conf` are root-owned and not writable by users.
 - The configured lifecycle state directory is owned by `SlurmUser` with mode
   `0700` and remains local to the controller.
 - Compute nodes can reach the gateway endpoint and read their local protected
-  `/etc/qfw-slurm/plugin.conf`. They do not mount the gateway journal or
+  `/etc/openqse/qfw-slurm/plugin.conf`. They do not mount the gateway journal or
   controller lifecycle state.
 
 `qfw-slurm-burst-buffer.conf(5)`, `qfw-slurm-plugin.conf(5)`, and
@@ -91,7 +91,7 @@ On the service host, inspect the gateway journal:
 
 ```bash
 qfw-slurm-gateway \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   status "${job_id}"
 ```
 
@@ -100,7 +100,7 @@ remains available for administrator retry:
 
 ```bash
 qfw-slurm-gateway-launch \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   retry-release "${job_id}"
 ```
 

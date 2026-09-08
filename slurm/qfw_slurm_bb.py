@@ -342,7 +342,11 @@ def parser() -> argparse.ArgumentParser:
         "operation", choices=("evaluate", "reserve", "release", "status")
     )
     output.add_argument("--driver", type=Path, default=Path("/usr/bin/qfw-slurm-driver"))
-    output.add_argument("--plugin-config", type=Path, default=Path("/etc/qfw-slurm/plugin.conf"))
+    output.add_argument(
+        "--plugin-config",
+        type=Path,
+        default=Path("/etc/openqse/qfw-slurm/plugin.conf"),
+    )
     output.add_argument("--state-dir", type=Path, default=Path("/var/lib/qfw-slurm/allocations"))
     output.add_argument("--job-script", type=Path)
     output.add_argument("--cluster", default="auto")

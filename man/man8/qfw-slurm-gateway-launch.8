@@ -35,7 +35,7 @@ Check one registered service:
 source /opt/openqse/qfw/bin/qfw-activate \
   --venv /opt/openqse/qfw-venv
 qfw-slurm-gateway-launch \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   check --service nwqsim-site
 .fi
 .RE
@@ -45,7 +45,7 @@ Retry one incomplete release:
 .RS
 .nf
 qfw-slurm-gateway-launch \
-  --config /etc/qfw-slurm/gateway.yaml \
+  --config /etc/openqse/qfw-slurm/gateway.yaml \
   retry-release 12345
 .fi
 .RE

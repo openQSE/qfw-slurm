@@ -2,7 +2,7 @@
 .SH NAME
 qfw-slurm-burst-buffer.conf \- qfw-slurm Lua lifecycle configuration
 .SH SYNOPSIS
-.I /etc/qfw-slurm/burst-buffer.lua.conf
+.I /etc/openqse/qfw-slurm/burst-buffer.lua.conf
 .SH DESCRIPTION
 This root-owned Lua file returns a table used by
 .IR burst_buffer.lua .
@@ -39,7 +39,7 @@ return {
         cluster = "qfw-cluster",
         helper = "/usr/libexec/qfw-slurm/qfw-slurm-bb",
         driver = "/usr/bin/qfw-slurm-driver",
-        plugin_config = "/etc/qfw-slurm/plugin.conf",
+        plugin_config = "/etc/openqse/qfw-slurm/plugin.conf",
         state_dir = "/var/lib/qfw-slurm/allocations",
         max_reservation_attempts = 8,
 }

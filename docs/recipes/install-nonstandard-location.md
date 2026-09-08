@@ -47,7 +47,10 @@ Slurm headers. That mode installs the driver and lifecycle helper but omits
 SPANK.
 
 The installation does not edit `/etc/slurm`, create service accounts, or start
-the gateway. Those remain site-administrator operations.
+the gateway. Those remain site-administrator operations. When the installation
+is promoted into a cluster, place qfw-slurm-owned site configuration under
+`/etc/openqse/qfw-slurm` and retain Slurm-native configuration under
+`/etc/slurm`.
 
 <details>
 <summary>Installation verification</summary>
