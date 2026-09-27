@@ -6,3 +6,7 @@ __pycache__/
 .coverage
 dist/
 *.egg-info/
+
+# ElectroBoy local runtime state
+.electroboy/local/
+.electroboy/shared/runs/*/progress/
