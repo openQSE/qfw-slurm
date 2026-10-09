@@ -14,6 +14,8 @@ local plugin_config = os.getenv("QFW_SLURM_PLUGIN_CONFIG") or
 	settings.plugin_config or "/etc/openqse/qfw-slurm/plugin.conf"
 local state_dir = os.getenv("QFW_SLURM_STATE_DIR") or settings.state_dir or
 	"/var/lib/qfw-slurm/allocations"
+local scancel = os.getenv("QFW_SLURM_SCANCEL") or settings.scancel or
+	"/usr/bin/scancel"
 local max_reservation_attempts = settings.max_reservation_attempts or 8
 
 local function quote(value)
@@ -95,7 +97,7 @@ local function cancel_job(job_id)
 	if not string.match(tostring(job_id), "^[0-9]+$") then
 		return
 	end
-	os.execute("/usr/bin/scancel --quiet " .. tostring(job_id))
+	os.execute(quote(scancel) .. " --quiet " .. tostring(job_id))
 end
 
 function slurm_bb_job_process(job_script, uid, gid, job_info)
@@ -202,5 +204,9 @@ function slurm_bb_get_status(uid, gid, ...)
 end
 
 if os.getenv("QFW_SLURM_LUA_TEST") == "1" then
-	return {helper_command = helper_command, run_helper = run_helper}
+	return {
+		helper_command = helper_command,
+		run_helper = run_helper,
+		cancel_job = cancel_job,
+	}
 end

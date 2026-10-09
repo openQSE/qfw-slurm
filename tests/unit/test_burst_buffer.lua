@@ -11,6 +11,7 @@ os.getenv = function(name)
 		QFW_SLURM_DRIVER = "/test/driver",
 		QFW_SLURM_PLUGIN_CONFIG = "/test/plugin.conf",
 		QFW_SLURM_STATE_DIR = work .. "/state",
+		QFW_SLURM_SCANCEL = work .. "/scancel",
 		QFW_SLURM_LUA_TEST = "1",
 	}
 	return values[name] or original_getenv(name)
@@ -24,6 +25,11 @@ stream:write("#!/bin/sh\necho \"$1\" >>", calls,
 	"\nexit ${QFW_TEST_STATUS:-0}\n")
 stream:close()
 os.execute("chmod 755 " .. helper)
+
+local scancel_stream = assert(io.open(work .. "/scancel", "w"))
+scancel_stream:write("#!/bin/sh\necho cancel:$2 >>", calls, "\n")
+scancel_stream:close()
+os.execute("chmod 755 " .. work .. "/scancel")
 
 local info = {
 	cluster = "test-cluster",
@@ -65,3 +71,8 @@ local process_status, directive = slurm_bb_job_process(job_script, 1001,
 assert(process_status == slurm.SUCCESS)
 assert(directive == "#QFW v=1 qpu=nwqsim-site workload=quantum " ..
 	"circuits=1 qubits=5 depth=20 shots=16\n")
+
+module.cancel_job(43)
+stream = assert(io.open(calls, "r"))
+assert(string.find(stream:read("*all"), "cancel:43", 1, true))
+stream:close()
