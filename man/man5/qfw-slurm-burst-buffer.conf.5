@@ -33,6 +33,25 @@ SPANK module injects application context.
 .BI max_reservation_attempts = count
 Set the positive maximum number of final reservation attempts. Exhaustion is
 terminal and cancels the job.
+.TP
+.BI reservation_retries = count
+Set how many times pre-run runs the final reservation again after a transient
+helper failure (exit status 30, or a helper that could not be run) before it
+reports the failure to Slurm. The default is 3. A delayed reservation (status
+10) and a permanent rejection (status 20) are never retried here.
+.TP
+.BI reservation_retry_delay = seconds
+Set the pause before the first pre-run retry. Each later pause doubles. The
+default is 2, so the default retries wait 2, 4 and 8 seconds.
+.TP
+.BI reservation_retry_budget = seconds
+Set the time since the first attempt after which pre-run starts no further
+retry. The default is 60. Keep it below the
+.B OtherTimeout
+of
+.BR burst_buffer.conf (5),
+because Slurm kills a pre-run hook that exceeds that timeout, tears the job
+down and requeues it.
 .SH EXAMPLE
 .nf
 return {
@@ -42,6 +61,9 @@ return {
         plugin_config = "/etc/openqse/qfw-slurm/plugin.conf",
         state_dir = "/var/lib/qfw-slurm/allocations",
         max_reservation_attempts = 8,
+        reservation_retries = 3,
+        reservation_retry_delay = 2,
+        reservation_retry_budget = 60,
 }
 .fi
 .SH SEE ALSO

@@ -25,7 +25,10 @@ should keep the job pending and poll later.
 Perform one final reservation after compute nodes are assigned. Accepted
 state is recorded for controller retry and teardown. The gateway journal owns
 the authoritative tuples. Exit status 10 requests deallocation and retry;
-status 20 is permanent rejection or attempt exhaustion.
+status 20 is permanent rejection or attempt exhaustion. Status 30 is a
+transient failure, which the Lua provider retries a bounded number of times
+before reporting it to Slurm. See
+.BR qfw-slurm-burst-buffer.conf (5).
 .TP
 .B release
 Attempt allocation-wide release. Missing local state does not suppress the
@@ -53,7 +56,8 @@ Retryable delayed admission.
 Permanent rejection or exhausted final-reservation attempts.
 .TP
 .B 30
-Operational, transport, state, or response failure.
+Operational, transport, state, or response failure. Pre-run retries a
+reserve operation that ends this way before it fails.
 .SH SEE ALSO
 .BR qfw-slurm-driver (1),
 .BR qfw-slurm-burst-buffer.conf (5),

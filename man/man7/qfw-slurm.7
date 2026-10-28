@@ -87,6 +87,12 @@ request. Acceptance permits execution. Delay makes Slurm deallocate the nodes
 and retry through its normal burst-buffer scheduling path. The configured
 attempt limit converts repeated final delay into terminal rejection.
 .PP
+A transient reserve failure, such as a dropped gateway connection, is retried
+inside pre-run with a pause that doubles each time, while the nodes stay
+assigned. Slurm sees the failure only when every retry fails. The retry count,
+first pause and time budget are set in
+.BR qfw-slurm-burst-buffer.conf (5).
+.PP
 Permanent admission rejection cancels the complete allocation. Teardown always
 returns success to Slurm after attempting release, while unresolved release
 details remain in protected state and the gateway journal.
