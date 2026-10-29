@@ -283,7 +283,10 @@ class Journal:
                         ),
                     )
                     return AllocationPlan(response, existing, missing)
-                if row["state"] == "delayed":
+                if row["state"] in {"delayed", "rolled-back"}:
+                    # Nothing is held. A delayed attempt released what it had
+                    # accepted and a failed attempt rolled back completely, so
+                    # the requested set is reserved again from the start.
                     self._connection.execute(
                         """UPDATE allocations
                            SET service_set_json = ?, request_fingerprint = ?,

@@ -6,6 +6,7 @@ from qfw_slurm_gateway.journal import (
     AllocationNotAccepted,
     AllocationNotFound,
     Journal,
+    JournalError,
     RequestConflict,
     ReservationRecord,
 )
@@ -41,6 +42,31 @@ def test_retryable_operation_starts_again(tmp_path) -> None:
     replay = journal.begin_operation(0, "evaluate", 7, "abc")
     assert replay is not None
     assert replay.response == {"decision": "accepted"}
+    journal.close()
+
+
+def test_rolled_back_allocation_reserves_again(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    journal.begin_allocation(
+        "cluster", 42, 1000, 1000, ("svc",), "x", "workload"
+    )
+    journal.set_allocation_state("cluster", 42, "rolling-back")
+    with pytest.raises(JournalError, match="incomplete transaction"):
+        journal.begin_allocation(
+            "cluster", 42, 1000, 1000, ("svc",), "x", "workload"
+        )
+    journal.complete_allocation("cluster", 42, "rolled-back", {"error_code": 4})
+
+    plan = journal.begin_allocation(
+        "cluster", 42, 1000, 1000, ("svc", "other"), "y", "workload"
+    )
+
+    assert plan.existing_response is None
+    assert plan.existing_services == ()
+    assert plan.missing_services == ("other", "svc")
+    status = journal.allocation_status("cluster", 42)
+    assert status["state"] == "reserving"
+    assert status["response_json"] is None
     journal.close()
 
 
