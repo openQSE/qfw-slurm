@@ -13,6 +13,7 @@ from .defw_client import QFwAdapter, QFwAdapterError, QPMBinding
 from .journal import (
     AllocationNotAccepted,
     AllocationNotFound,
+    AllocationPlan,
     AllocationReleased,
     Journal,
     JournalError,
@@ -89,6 +90,28 @@ def _operation_scope(
 
 def _error(code: GatewayError, request_id: int, detail: object) -> ErrorResponse:
     return ErrorResponse(code, request_id, bounded_diagnostic(detail))
+
+
+def _reserve_error(request_id: int, error: Exception) -> ErrorResponse:
+    """Map a reserve failure to the error response the provider receives."""
+
+    if isinstance(error, RequestConflict):
+        return _error(GatewayError.REQUEST_CONFLICT, request_id, error)
+    if isinstance(error, SlurmVerificationError):
+        return _error(GatewayError.UNAUTHORIZED, request_id, error)
+    if isinstance(error, QFwAdapterError):
+        return _error(GatewayError.QPM, request_id, error)
+    if isinstance(error, JournalError):
+        return _error(GatewayError.INTERNAL, request_id, error)
+    return _error(
+        GatewayError.INTERNAL,
+        request_id,
+        f"unexpected reserve failure: {error}",
+    )
+
+
+class RollbackIncomplete(JournalError):
+    """Raised when a rollback did not complete and a reservation may be held."""
 
 
 class GatewayService:
@@ -333,13 +356,17 @@ class GatewayService:
                     plan.missing_services,
                     _reservation_fingerprint(request),
                 )
-            except Exception:
+            except Exception as error:
                 if plan.is_extension:
                     self.journal.restore_accepted_allocation(
                         request.cluster_name,
                         request.canonical_job_id,
                         plan.existing_services,
                         plan.existing_response,
+                    )
+                if not isinstance(error, RollbackIncomplete):
+                    self._journal_failed_attempt(
+                        request, sender_uid, scope, plan, error
                     )
                 raise
             if plan.is_extension:
@@ -392,20 +419,43 @@ class GatewayService:
                 "retryable" if state == "delayed" else "complete",
             )
             return response
-        except RequestConflict as error:
-            return _error(GatewayError.REQUEST_CONFLICT, request.request_id, error)
-        except SlurmVerificationError as error:
-            return _error(GatewayError.UNAUTHORIZED, request.request_id, error)
-        except QFwAdapterError as error:
-            return _error(GatewayError.QPM, request.request_id, error)
-        except JournalError as error:
-            return _error(GatewayError.INTERNAL, request.request_id, error)
         except Exception as error:
-            return _error(
-                GatewayError.INTERNAL,
-                request.request_id,
-                f"unexpected reserve failure: {error}",
+            return _reserve_error(request.request_id, error)
+
+    def _journal_failed_attempt(
+        self,
+        request: ReserveRequest,
+        sender_uid: int,
+        scope: str,
+        plan: AllocationPlan,
+        error: Exception,
+    ) -> None:
+        """Journal a reserve attempt that failed after a complete rollback.
+
+        The rollback released every reservation the attempt held, so the
+        operation may be repeated under its request id, as a delayed reserve
+        may, and a new request id reserves again from the rolled-back
+        allocation. An incomplete rollback never reaches this point: its
+        operation stays started and its allocation stays rolling-back, so
+        every repeat is refused while the journal shows the unresolved rows.
+        """
+
+        failure = response_to_dict(_reserve_error(request.request_id, error))
+        if not plan.is_extension:
+            self.journal.complete_allocation(
+                request.cluster_name,
+                request.canonical_job_id,
+                "rolled-back",
+                failure,
             )
+        self.journal.complete_operation(
+            sender_uid,
+            "reserve",
+            request.request_id,
+            failure,
+            scope,
+            "retryable",
+        )
 
     async def _reserve_services(
         self,
@@ -458,7 +508,7 @@ class GatewayService:
                 try:
                     await self._rollback(request, rollback)
                 except Exception as rollback_error:
-                    raise JournalError(
+                    raise RollbackIncomplete(
                         f"reserve failed and rollback was incomplete: {rollback_error}"
                     ) from error
                 raise
@@ -526,7 +576,7 @@ class GatewayService:
             except Exception as error:
                 failures.append(str(error))
         if failures:
-            raise JournalError("allocation rollback was incomplete")
+            raise RollbackIncomplete("allocation rollback was incomplete")
 
     async def _release(
         self, request: ReleaseRequest, sender_uid: int

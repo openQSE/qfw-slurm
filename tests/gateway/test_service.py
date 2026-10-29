@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import asyncio
 
-from qfw_slurm_gateway.defw_client import QPMBinding
+from qfw_slurm_gateway.defw_client import QFwAdapterError, QPMBinding
 from qfw_slurm_gateway.journal import Journal
 from qfw_slurm_gateway.protocol import (
     AdmissionDecision,
@@ -134,6 +134,29 @@ class FailingAdapter(FakeAdapter):
 
 
 class ReleaseFailingAdapter(FakeAdapter):
+    def release(self, binding, reservation_id, reason):
+        raise RuntimeError("configured release failure")
+
+
+class FailOnceAdapter(FakeAdapter):
+    """Fail the first reserve of one service inside the gateway."""
+
+    def __init__(self, failing_service):
+        super().__init__()
+        self.failing_service = failing_service
+        self.failed = False
+
+    def reserve(self, binding, request, job):
+        if binding.service_id == self.failing_service and not self.failed:
+            self.failed = True
+            self.reserves.append(binding.service_id)
+            raise QFwAdapterError(
+                f"QPM {binding.service_id!r} reserve failed: DEFw peer lost"
+            )
+        return super().reserve(binding, request, job)
+
+
+class RollbackFailingAdapter(FailOnceAdapter):
     def release(self, binding, reservation_id, reason):
         raise RuntimeError("configured release failure")
 
@@ -459,6 +482,9 @@ async def _partial_reserve_is_rolled_back(tmp_path) -> None:
     assert response.decision == AdmissionDecision.REJECTED
     assert adapter.releases == [("svc-a", 40, 1)]
     assert all(item.reservation_id is None for item in response.results)
+    replay = await service.handle(request(), 1001)
+    assert replay == response
+    assert adapter.reserves == ["svc-a", "svc-b"]
     released = await service.handle(ReleaseRequest(2, "cluster", 100, 3), 1001)
     assert isinstance(released, ReleaseResponse)
     assert len(released.results) == 1
@@ -477,6 +503,132 @@ async def _resolve_failure_rolls_back_prior_service(tmp_path) -> None:
     response = await service.handle(request(), 1001)
     assert response.error_code == GatewayError.INTERNAL
     assert adapter.releases == [("svc-a", 40, 1)]
+    assert journal.allocation_status("cluster", 100)["state"] == "rolled-back"
+    journal.close()
+
+
+def test_failed_reserve_is_repeated_under_the_same_request_id(tmp_path) -> None:
+    asyncio.run(_failed_reserve_is_repeated_under_the_same_request_id(tmp_path))
+
+
+async def _failed_reserve_is_repeated_under_the_same_request_id(
+    tmp_path,
+) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailOnceAdapter("svc-b")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(request(10), 1001)
+    status = journal.allocation_status("cluster", 100)
+    accepted = await service.handle(request(10), 1001)
+    replay = await service.handle(request(10), 1001)
+
+    assert failed.error_code == GatewayError.QPM
+    assert adapter.releases == [("svc-a", 40, 1)]
+    assert status["state"] == "rolled-back"
+    assert {
+        item["service_id"]: item["state"] for item in status["reservations"]
+    } == {"svc-a": "rolled-back", "svc-b": "pending"}
+    assert isinstance(accepted, ReserveResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert replay == accepted
+    assert adapter.reserves == ["svc-a", "svc-b", "svc-a", "svc-b"]
+    assert journal.allocation_status("cluster", 100)["state"] == "accepted"
+    journal.close()
+
+
+def test_failed_reserve_is_repeated_under_a_new_request_id(tmp_path) -> None:
+    asyncio.run(_failed_reserve_is_repeated_under_a_new_request_id(tmp_path))
+
+
+async def _failed_reserve_is_repeated_under_a_new_request_id(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailOnceAdapter("svc-a")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(request(10), 1001)
+    status = journal.allocation_status("cluster", 100)
+    accepted = await service.handle(request(11), 1001)
+    late = await service.handle(request(10), 1001)
+    retrieved = await service.handle(lookup_request(), 1001)
+
+    assert failed.error_code == GatewayError.QPM
+    assert adapter.releases == []
+    assert status["state"] == "rolled-back"
+    assert isinstance(accepted, ReserveResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert late == dataclasses.replace(accepted, request_id=10)
+    assert adapter.reserves == ["svc-a", "svc-a", "svc-b"]
+    assert isinstance(retrieved, GetReservationsResponse)
+    assert [
+        (item.service_id, item.reservation_id) for item in retrieved.reservations
+    ] == [("svc-a", 41), ("svc-b", 42)]
+    journal.close()
+
+
+def test_incomplete_rollback_keeps_refusing_reserves(tmp_path) -> None:
+    asyncio.run(_incomplete_rollback_keeps_refusing_reserves(tmp_path))
+
+
+async def _incomplete_rollback_keeps_refusing_reserves(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = RollbackFailingAdapter("svc-b")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(request(10), 1001)
+    repeated = await service.handle(request(10), 1001)
+    renewed = await service.handle(request(11), 1001)
+    status = journal.allocation_status("cluster", 100)
+
+    assert failed.error_code == GatewayError.INTERNAL
+    assert "rollback was incomplete" in failed.diagnostic
+    assert repeated.error_code == GatewayError.INTERNAL
+    assert "requires recovery" in repeated.diagnostic
+    assert renewed.error_code == GatewayError.INTERNAL
+    assert "incomplete transaction" in renewed.diagnostic
+    assert adapter.reserves == ["svc-a", "svc-b"]
+    assert status["state"] == "rolling-back"
+    assert {
+        item["service_id"]: item["state"] for item in status["reservations"]
+    } == {"svc-a": "rollback-failed", "svc-b": "pending"}
+    journal.close()
+
+
+def test_failed_heterogeneous_extension_is_repeated(tmp_path) -> None:
+    asyncio.run(_failed_heterogeneous_extension_is_repeated(tmp_path))
+
+
+async def _failed_heterogeneous_extension_is_repeated(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailOnceAdapter("svc-b")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+    first_request = dataclasses.replace(
+        request(),
+        service_ids=("svc-a",),
+        hetero_job_id=100,
+        hetero_component=0,
+    )
+    extension = dataclasses.replace(
+        request(),
+        service_ids=("svc-b",),
+        hetero_job_id=101,
+        hetero_component=1,
+    )
+
+    first = await service.handle(first_request, 1001)
+    failed = await service.handle(extension, 1001)
+    status = journal.allocation_status("cluster", 100)
+    extended = await service.handle(extension, 1001)
+    retrieved = await service.handle(lookup_request(9), 1001)
+
+    assert isinstance(first, ReserveResponse)
+    assert failed.error_code == GatewayError.QPM
+    assert status["state"] == "accepted"
+    assert isinstance(extended, ReserveResponse)
+    assert [item.service_id for item in extended.results] == ["svc-a", "svc-b"]
+    assert adapter.reserves == ["svc-a", "svc-b", "svc-b"]
+    assert isinstance(retrieved, GetReservationsResponse)
+    assert [item.service_id for item in retrieved.reservations] == ["svc-a", "svc-b"]
     journal.close()
 
 
