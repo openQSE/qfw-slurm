@@ -108,8 +108,10 @@ qfw-slurm-gateway-launch \
 
 If a job remains in `BurstBufferStageIn`, inspect its protected state and the
 gateway log. An `evaluation-delayed` state is normal and must have no
-`reservations` field. A `reservation-delayed` state must return the assigned
-nodes before the next evaluation cycle.
+`reservations` field. A `reservation-delayed` state is normal while pre-run
+waits for the QPM with the nodes assigned. It must end in
+`reservation-accepted`, or in a cancelled job once the wait budget or the
+attempt limit is exhausted.
 
 If controller retry state cannot be written after QPMd commits a reservation,
 teardown still sends allocation-wide release using the configured cluster and
