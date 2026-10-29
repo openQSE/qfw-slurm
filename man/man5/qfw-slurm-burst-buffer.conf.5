@@ -46,8 +46,9 @@ before it cancels the job. The default is
 .TP
 .BI max_reservation_attempts = count
 Set the positive maximum number of final reservation attempts the helper
-makes for one job. The attempts pre-run makes while a QPM reports a delay
-count towards it. Exhaustion is terminal and cancels the job.
+makes for one job. Every reserve the helper completes counts towards it,
+whether the QPM delayed it or the gateway reported a failure; a helper that
+could not be run does not. Exhaustion is terminal and cancels the job.
 .TP
 .BI reservation_retries = count
 Set how many times pre-run runs the final reservation again after a transient

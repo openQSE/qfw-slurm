@@ -296,10 +296,13 @@ assert(string.find(pre_run_message, "QPM reservation still delayed after " ..
 assert(read_calls() == "reserve\n" .. gave_up(53, pre_run_message))
 
 -- The wait budget ends a delay that never clears. os.time() has whole
--- second resolution, so with a 1 s budget and 0.3 s waits the loop makes
--- between two and five attempts before the budget check fails.
+-- second resolution and the clock may tick during the first helper call,
+-- so with a 2 s budget and 0.3 s waits the loop makes at least two and at
+-- most eight attempts before the budget check fails. Seven waits take at
+-- least 2.1 s, so the eighth attempt always ends the loop and the eight
+-- planned statuses suffice.
 load_module("return {reservation_wait_interval = 0.3, " ..
-	"reservation_wait_budget = 1}\n")
+	"reservation_wait_budget = 2}\n")
 reset_calls()
 plan_statuses({10, 10, 10, 10, 10, 10, 10, 10})
 pre_run_status, pre_run_message = slurm_bb_pre_run(54, job_script, 1001,
@@ -307,7 +310,7 @@ pre_run_status, pre_run_message = slurm_bb_pre_run(54, job_script, 1001,
 assert(pre_run_status == slurm.ERROR)
 local waited = tonumber(string.match(pre_run_message,
 	"^QPM reservation still delayed after (%d+) attempts: "))
-assert(waited ~= nil and waited >= 2 and waited <= 5, pre_run_message)
+assert(waited ~= nil and waited >= 2 and waited <= 8, pre_run_message)
 assert(read_calls() == string.rep("reserve\n", waited) ..
 	gave_up(54, pre_run_message))
 assert(#logged == waited)
