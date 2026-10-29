@@ -41,8 +41,10 @@ local function load_module(settings_body)
 	return loaded
 end
 
--- Short pauses keep the suite fast while the retry path still sleeps.
-local module = load_module("return {reservation_retry_delay = 0.2}\n")
+-- Short pauses keep the suite fast while the retry and wait paths still
+-- sleep.
+local module = load_module("return {reservation_retry_delay = 0.2, " ..
+	"reservation_wait_interval = 0.2}\n")
 
 -- The fake helper records each operation and exits with the next planned
 -- status, or 0 when nothing is planned.
@@ -135,10 +137,10 @@ local pre_run_status, pre_run_message = slurm_bb_pre_run(44, job_script,
 assert(pre_run_status == slurm.SUCCESS, pre_run_message)
 assert(read_calls() == "reserve\nreserve\n")
 assert(#logged == 1)
-assert(string.find(logged[1], "job 44: QPM reservation attempt 1 of 4", 1,
+assert(string.find(logged[1], "job 44: QPM reservation attempt 1 failed", 1,
 	true))
 assert(string.find(logged[1], "status 30", 1, true))
-assert(string.find(logged[1], "retrying in 0.2 s", 1, true))
+assert(string.find(logged[1], "retry 1 of 3 in 0.2 s", 1, true))
 
 -- A helper that could not be run is retried the same way.
 reset_calls()
@@ -149,8 +151,8 @@ assert(pre_run_status == slurm.SUCCESS, pre_run_message)
 assert(read_calls() == "reserve\nreserve\n")
 assert(#logged == 1)
 
--- Exhausting the retries fails pre-run with the attempt count after the
--- pauses (0.2, 0.4 and 0.8 s) and does not cancel the job.
+-- Exhausting the retries, after the pauses (0.2, 0.4 and 0.8 s), cancels
+-- the job and fails pre-run with the attempt count.
 reset_calls()
 plan_statuses({30, 30, 30, 30})
 local started = os.time()
@@ -161,10 +163,12 @@ assert(os.time() - started >= 1)
 assert(string.find(pre_run_message, "QPM reservation failed after 4 " ..
 	"attempts: ", 1, true) == 1, pre_run_message)
 assert(string.find(pre_run_message, "status 30", 1, true))
-assert(read_calls() == string.rep("reserve\n", 4))
-assert(#logged == 3)
-assert(string.find(logged[3], "attempt 3 of 4", 1, true))
-assert(string.find(logged[3], "retrying in 0.8 s", 1, true))
+assert(read_calls() == string.rep("reserve\n", 4) .. "cancel:45\n")
+assert(#logged == 4)
+assert(string.find(logged[3], "attempt 3 failed", 1, true))
+assert(string.find(logged[3], "retry 3 of 3 in 0.8 s", 1, true))
+assert(string.find(logged[4], "job 45: cancelling: QPM reservation failed",
+	1, true))
 
 -- A permanent rejection is not retried and cancels the job.
 reset_calls()
@@ -175,40 +179,116 @@ assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation rejected: ", 1,
 	true) == 1, pre_run_message)
 assert(read_calls() == "reserve\ncancel:46\n")
-assert(#logged == 0)
+assert(#logged == 1)
+assert(string.find(logged[1], "job 46: cancelling: QPM reservation " ..
+	"rejected: ", 1, true))
 
--- A delayed reservation goes back to Slurm's requeue path without a retry.
+-- A delayed reservation is reserved again after the wait interval and
+-- succeeds once the QPM accepts.
 reset_calls()
-plan_statuses({10})
+plan_statuses({10, 0})
 pre_run_status, pre_run_message = slurm_bb_pre_run(47, job_script, 1001,
 	1001, info)
-assert(pre_run_status == slurm.ERROR)
-assert(string.find(pre_run_message, "QPM reservation retry required: ", 1,
-	true) == 1, pre_run_message)
-assert(read_calls() == "reserve\n")
-assert(#logged == 0)
+assert(pre_run_status == slurm.SUCCESS, pre_run_message)
+assert(read_calls() == "reserve\nreserve\n")
+assert(#logged == 1)
+assert(string.find(logged[1], "job 47: QPM reservation attempt 1 delayed",
+	1, true))
+assert(string.find(logged[1], "status 10", 1, true))
+assert(string.find(logged[1], "waiting 0.2 s", 1, true))
 
--- With no retries configured pre-run makes a single attempt.
+-- Transient failures and delays can follow each other in one pre-run.
+reset_calls()
+plan_statuses({30, 10, 0})
+pre_run_status, pre_run_message = slurm_bb_pre_run(48, job_script, 1001,
+	1001, info)
+assert(pre_run_status == slurm.SUCCESS, pre_run_message)
+assert(read_calls() == string.rep("reserve\n", 3))
+assert(#logged == 2)
+assert(string.find(logged[1], "attempt 1 failed", 1, true))
+assert(string.find(logged[2], "attempt 2 delayed", 1, true))
+
+-- A rejection after delays (the helper's attempt limit, or a real
+-- rejection) cancels the job and reports the attempt count.
+reset_calls()
+plan_statuses({10, 10, 20})
+pre_run_status, pre_run_message = slurm_bb_pre_run(49, job_script, 1001,
+	1001, info)
+assert(pre_run_status == slurm.ERROR)
+assert(string.find(pre_run_message, "QPM reservation rejected after 3 " ..
+	"attempts: ", 1, true) == 1, pre_run_message)
+assert(string.find(pre_run_message, "status 20", 1, true))
+assert(read_calls() == string.rep("reserve\n", 3) .. "cancel:49\n")
+assert(#logged == 3)
+assert(string.find(logged[3], "job 49: cancelling: QPM reservation " ..
+	"rejected after 3 attempts", 1, true))
+
+-- With no retries configured pre-run makes a single attempt and cancels.
 load_module("return {reservation_retries = 0}\n")
 reset_calls()
 plan_statuses({30, 0})
-pre_run_status, pre_run_message = slurm_bb_pre_run(48, job_script, 1001,
+pre_run_status, pre_run_message = slurm_bb_pre_run(50, job_script, 1001,
 	1001, info)
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation failed after 1 " ..
 	"attempt: ", 1, true) == 1, pre_run_message)
-assert(read_calls() == "reserve\n")
-assert(#logged == 0)
+assert(read_calls() == "reserve\ncancel:50\n")
+assert(#logged == 1)
 
--- A retry that would overrun the time budget is not started.
+-- A retry that would overrun the retry budget is not started.
 load_module("return {reservation_retry_delay = 0.2, " ..
 	"reservation_retry_budget = 0}\n")
 reset_calls()
 plan_statuses({30, 0})
-pre_run_status, pre_run_message = slurm_bb_pre_run(49, job_script, 1001,
+pre_run_status, pre_run_message = slurm_bb_pre_run(51, job_script, 1001,
 	1001, info)
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation failed after 1 " ..
 	"attempt: ", 1, true) == 1, pre_run_message)
-assert(read_calls() == "reserve\n")
-assert(#logged == 0)
+assert(read_calls() == "reserve\ncancel:51\n")
+assert(#logged == 1)
+
+-- A wait that would overrun the wait budget is not started: the job is
+-- cancelled as still delayed.
+load_module("return {reservation_wait_interval = 0.2, " ..
+	"reservation_wait_budget = 0}\n")
+reset_calls()
+plan_statuses({10, 0})
+pre_run_status, pre_run_message = slurm_bb_pre_run(52, job_script, 1001,
+	1001, info)
+assert(pre_run_status == slurm.ERROR)
+assert(string.find(pre_run_message, "QPM reservation still delayed after " ..
+	"1 attempt: ", 1, true) == 1, pre_run_message)
+assert(string.find(pre_run_message, "status 10", 1, true))
+assert(read_calls() == "reserve\ncancel:52\n")
+assert(#logged == 1)
+assert(string.find(logged[1], "job 52: cancelling: QPM reservation still " ..
+	"delayed", 1, true))
+
+-- A wait interval of zero disables the wait.
+load_module("return {reservation_wait_interval = 0}\n")
+reset_calls()
+plan_statuses({10, 0})
+pre_run_status, pre_run_message = slurm_bb_pre_run(53, job_script, 1001,
+	1001, info)
+assert(pre_run_status == slurm.ERROR)
+assert(string.find(pre_run_message, "QPM reservation still delayed after " ..
+	"1 attempt: ", 1, true) == 1, pre_run_message)
+assert(read_calls() == "reserve\ncancel:53\n")
+
+-- The wait budget ends a delay that never clears. os.time() has whole
+-- second resolution, so with a 1 s budget and 0.3 s waits the loop makes
+-- between two and five attempts before the budget check fails.
+load_module("return {reservation_wait_interval = 0.3, " ..
+	"reservation_wait_budget = 1}\n")
+reset_calls()
+plan_statuses({10, 10, 10, 10, 10, 10, 10, 10})
+pre_run_status, pre_run_message = slurm_bb_pre_run(54, job_script, 1001,
+	1001, info)
+assert(pre_run_status == slurm.ERROR)
+local waited = tonumber(string.match(pre_run_message,
+	"^QPM reservation still delayed after (%d+) attempts: "))
+assert(waited ~= nil and waited >= 2 and waited <= 5, pre_run_message)
+assert(read_calls() == string.rep("reserve\n", waited) .. "cancel:54\n")
+assert(#logged == waited)
+assert(string.find(logged[waited - 1], "waiting 0.3 s", 1, true))

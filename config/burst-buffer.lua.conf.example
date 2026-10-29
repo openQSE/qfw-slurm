@@ -9,4 +9,6 @@ return {
 	reservation_retries = 3,
 	reservation_retry_delay = 2,
 	reservation_retry_budget = 60,
+	reservation_wait_interval = 15,
+	reservation_wait_budget = 90,
 }

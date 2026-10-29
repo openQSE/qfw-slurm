@@ -21,6 +21,10 @@ local reservation_retries = tonumber(settings.reservation_retries) or 3
 local reservation_retry_delay = tonumber(settings.reservation_retry_delay) or 2
 local reservation_retry_budget = tonumber(settings.reservation_retry_budget) or
 	60
+local reservation_wait_interval =
+	tonumber(settings.reservation_wait_interval) or 15
+local reservation_wait_budget =
+	tonumber(settings.reservation_wait_budget) or 90
 
 local function quote(value)
 	value = tostring(value)
@@ -116,31 +120,71 @@ local function pause(seconds)
 	end
 end
 
--- Run the final reservation again after a transient helper failure. A
--- pre-run failure makes Slurm tear the job down and requeue it, so a
--- dropped gateway connection must not reach Slurm as a failure while a
--- short pause would have cured it. Delayed (10) and rejected (20) results
--- are decisions, not failures, and are never retried here.
+-- Run the final reservation again until the QPM accepts or rejects it.
+-- A pre-run failure makes Slurm tear the job down and requeue it, and
+-- Slurm 25.05 never schedules that requeued job again (see fail_job), so a
+-- condition that is expected to clear must be waited out here, with the
+-- nodes assigned, instead of being reported to Slurm. That is a transient
+-- helper failure (30, or a helper that could not be run), retried with a
+-- pause that doubles, and a QPM that reports a delay (10) because its
+-- capacity changed after the evaluation, reserved again at a fixed
+-- interval. A rejection (20) is a decision and ends the loop at once. The
+-- helper's own attempt limit bounds the delayed attempts as well, and both
+-- time budgets count from the first attempt.
 local function reserve(job_id, job_script, uid, gid, job_info)
-	local attempts = 1 + math.max(0, math.floor(reservation_retries))
-	local delay = math.max(0, reservation_retry_delay)
+	local retries = math.max(0, math.floor(reservation_retries))
+	local retry_delay = math.max(0, reservation_retry_delay)
 	local started = os.time()
 	local attempt = 1
+	local retried = 0
 	local status, message = run_helper("reserve", job_id, job_script, uid,
 		gid, job_info)
-	while status ~= 0 and status ~= 10 and status ~= 20 and
-		attempt < attempts and
-		os.time() - started + delay <= reservation_retry_budget do
-		log_info(string.format("slurm_bb_pre_run: job %s: QPM reservation " ..
-			"attempt %d of %d failed (%s), retrying in %s s",
-			tostring(job_id), attempt, attempts, message, tostring(delay)))
-		pause(delay)
-		delay = delay * 2
+	while status ~= 0 and status ~= 20 do
+		local elapsed = os.time() - started
+		local pause_seconds
+		if status == 10 then
+			if reservation_wait_interval <= 0 or
+				elapsed + reservation_wait_interval >
+				reservation_wait_budget then
+				break
+			end
+			pause_seconds = reservation_wait_interval
+			log_info(string.format("slurm_bb_pre_run: job %s: QPM " ..
+				"reservation attempt %d delayed (%s), waiting %s s",
+				tostring(job_id), attempt, message,
+				tostring(pause_seconds)))
+		else
+			if retried >= retries or
+				elapsed + retry_delay > reservation_retry_budget then
+				break
+			end
+			retried = retried + 1
+			pause_seconds = retry_delay
+			retry_delay = retry_delay * 2
+			log_info(string.format("slurm_bb_pre_run: job %s: QPM " ..
+				"reservation attempt %d failed (%s), retry %d of %d " ..
+				"in %s s", tostring(job_id), attempt, message, retried,
+				retries, tostring(pause_seconds)))
+		end
+		pause(pause_seconds)
 		attempt = attempt + 1
 		status, message = run_helper("reserve", job_id, job_script, uid,
 			gid, job_info)
 	end
 	return status, message, attempt
+end
+
+-- Cancel the job before reporting a pre-run failure to Slurm. On Slurm
+-- 25.05 the burst_buffer/lua plugin answers a pre-run error by requeueing
+-- the job with the state reason FAIL_BURST_BUFFER_OP, and slurmctld's
+-- job_independent() treats that reason as a hold: the job keeps its
+-- priority, is not reported as held and is never scheduled again until an
+-- operator runs scontrol release. A cancelled job is a visible failure.
+local function fail_job(job_id, message)
+	log_info(string.format("slurm_bb_pre_run: job %s: cancelling: %s",
+		tostring(job_id), message))
+	cancel_job(job_id)
+	return slurm.ERROR, message
 end
 
 function slurm_bb_job_process(job_script, uid, gid, job_info)
@@ -211,16 +255,21 @@ function slurm_bb_pre_run(job_id, job_script, uid, gid, job_info)
 	if status == 0 then
 		return slurm.SUCCESS
 	end
+	local count = attempts == 1 and "1 attempt" or
+		tostring(attempts) .. " attempts"
+	if status == 20 and attempts == 1 then
+		return fail_job(job_id, "QPM reservation rejected: " .. message)
+	end
 	if status == 20 then
-		cancel_job(job_id)
-		return slurm.ERROR, "QPM reservation rejected: " .. message
+		return fail_job(job_id, "QPM reservation rejected after " .. count ..
+			": " .. message)
 	end
 	if status == 10 then
-		return slurm.ERROR, "QPM reservation retry required: " .. message
+		return fail_job(job_id, "QPM reservation still delayed after " ..
+			count .. ": " .. message)
 	end
-	local noun = attempts == 1 and " attempt: " or " attempts: "
-	return slurm.ERROR, "QPM reservation failed after " ..
-		tostring(attempts) .. noun .. message
+	return fail_job(job_id, "QPM reservation failed after " .. count .. ": " ..
+		message)
 end
 
 function slurm_bb_post_run(job_id, job_script, uid, gid, job_info)
