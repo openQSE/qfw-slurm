@@ -84,11 +84,25 @@ generated.
 .SH JOURNAL STATES
 An allocation may be
 .BR reserving ,
-.BR reserved ,
-.BR releasing ,
+.BR extending ,
+.BR accepted ,
+.BR delayed ,
+.BR rejected ,
+.BR rolling-back ,
+.BR rolled-back ,
 .BR release-incomplete ,
 or
 .BR released .
+A reserve attempt that fails inside the gateway rolls back every reservation
+it had accepted. When the rollback completes, the allocation becomes
+.B rolled-back
+and the next reserve request for the job, under the same request identity or
+a new one, reserves again from the start. When the rollback does not complete,
+the allocation stays
+.B rolling-back
+with its failed reservation rows and every reserve request for the job is
+refused. An operator releases what the rollback left with
+.BR retry-release .
 Unresolved release results remain journaled for an operator retry. The gateway
 does not report them as released.
 .SH SECURITY
