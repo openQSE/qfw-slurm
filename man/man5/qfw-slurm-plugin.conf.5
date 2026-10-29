@@ -46,8 +46,10 @@ The quoted section name is the public value accepted by
 .BR --qpu .
 The required
 .B service_id
-is the exact stable service ID registered by QPMd. Resource names and service
-IDs must be unique and nonempty.
+is the exact stable service ID registered by QPMd and must be nonempty.
+Resource names must be unique. Several resources may share one
+.BR service_id ,
+so that more than one public name can select an aggregate QPM service.
 .SH EXAMPLE
 .nf
 [gateway]
