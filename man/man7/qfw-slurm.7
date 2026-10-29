@@ -99,9 +99,18 @@ Slurm 25.05 requeues a job whose pre-run hook failed with the state reason
 and slurmctld treats that reason as a hold without reporting the job as held,
 so the job would stay pending at its priority until an operator released it.
 A permanent admission rejection, an exhausted attempt limit or an exhausted
-budget therefore cancels the complete allocation. Teardown always returns
-success to Slurm after attempting release, while unresolved release details
-remain in protected state and the gateway journal.
+budget therefore cancels the complete allocation. Before it cancels, pre-run
+writes the reason into the job's
+.BR AdminComment ,
+which
+.B scontrol show job
+and
+.B sacct
+report, because Slurm ends the running hook as part of the cancel and the
+hook's own error message never reaches the job record. The slurmctld log
+carries the same message. Teardown always returns success to Slurm after
+attempting release, while unresolved release details remain in protected
+state and the gateway journal.
 .SH RESERVATION ENVIRONMENT
 Every application step receives
 .B QFW_RESERVATIONS

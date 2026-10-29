@@ -32,6 +32,7 @@ local function load_module(settings_body)
 			QFW_SLURM_PLUGIN_CONFIG = "/test/plugin.conf",
 			QFW_SLURM_STATE_DIR = work .. "/state",
 			QFW_SLURM_SCANCEL = work .. "/scancel",
+			QFW_SLURM_SCONTROL = work .. "/scontrol",
 			QFW_SLURM_LUA_TEST = "1",
 		}
 		return values[name] or original_getenv(name)
@@ -65,6 +66,12 @@ scancel_stream:write("#!/bin/sh\necho cancel:$2 >>", calls, "\n")
 scancel_stream:close()
 os.execute("chmod 755 " .. work .. "/scancel")
 
+-- The fake scontrol records the job and the comment it is asked to set.
+local scontrol_stream = assert(io.open(work .. "/scontrol", "w"))
+scontrol_stream:write("#!/bin/sh\necho \"comment:$2:$3\" >>", calls, "\n")
+scontrol_stream:close()
+os.execute("chmod 755 " .. work .. "/scontrol")
+
 local function plan_statuses(values)
 	local plan = assert(io.open(statuses, "w"))
 	for _, value in ipairs(values) do
@@ -84,6 +91,13 @@ local function read_calls()
 	local content = reader:read("*all")
 	reader:close()
 	return content
+end
+
+-- The calls pre-run makes when it gives up: the reason goes into the
+-- job's AdminComment, then the job is cancelled.
+local function gave_up(job_id, message)
+	return "comment:JobId=" .. job_id .. ":AdminComment=slurm_bb_pre_run: " ..
+		message .. "\n" .. "cancel:" .. job_id .. "\n"
 end
 
 local info = {
@@ -163,7 +177,8 @@ assert(os.time() - started >= 1)
 assert(string.find(pre_run_message, "QPM reservation failed after 4 " ..
 	"attempts: ", 1, true) == 1, pre_run_message)
 assert(string.find(pre_run_message, "status 30", 1, true))
-assert(read_calls() == string.rep("reserve\n", 4) .. "cancel:45\n")
+assert(read_calls() == string.rep("reserve\n", 4) ..
+	gave_up(45, pre_run_message))
 assert(#logged == 4)
 assert(string.find(logged[3], "attempt 3 failed", 1, true))
 assert(string.find(logged[3], "retry 3 of 3 in 0.8 s", 1, true))
@@ -178,7 +193,10 @@ pre_run_status, pre_run_message = slurm_bb_pre_run(46, job_script, 1001,
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation rejected: ", 1,
 	true) == 1, pre_run_message)
-assert(read_calls() == "reserve\ncancel:46\n")
+assert(read_calls() == "reserve\n" .. gave_up(46, pre_run_message))
+assert(string.find(read_calls(), "comment:JobId=46:AdminComment=" ..
+	"slurm_bb_pre_run: QPM reservation rejected: qfw-slurm helper exited " ..
+	"with status 20\n", 1, true))
 assert(#logged == 1)
 assert(string.find(logged[1], "job 46: cancelling: QPM reservation " ..
 	"rejected: ", 1, true))
@@ -218,7 +236,8 @@ assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation rejected after 3 " ..
 	"attempts: ", 1, true) == 1, pre_run_message)
 assert(string.find(pre_run_message, "status 20", 1, true))
-assert(read_calls() == string.rep("reserve\n", 3) .. "cancel:49\n")
+assert(read_calls() == string.rep("reserve\n", 3) ..
+	gave_up(49, pre_run_message))
 assert(#logged == 3)
 assert(string.find(logged[3], "job 49: cancelling: QPM reservation " ..
 	"rejected after 3 attempts", 1, true))
@@ -232,7 +251,7 @@ pre_run_status, pre_run_message = slurm_bb_pre_run(50, job_script, 1001,
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation failed after 1 " ..
 	"attempt: ", 1, true) == 1, pre_run_message)
-assert(read_calls() == "reserve\ncancel:50\n")
+assert(read_calls() == "reserve\n" .. gave_up(50, pre_run_message))
 assert(#logged == 1)
 
 -- A retry that would overrun the retry budget is not started.
@@ -245,7 +264,7 @@ pre_run_status, pre_run_message = slurm_bb_pre_run(51, job_script, 1001,
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation failed after 1 " ..
 	"attempt: ", 1, true) == 1, pre_run_message)
-assert(read_calls() == "reserve\ncancel:51\n")
+assert(read_calls() == "reserve\n" .. gave_up(51, pre_run_message))
 assert(#logged == 1)
 
 -- A wait that would overrun the wait budget is not started: the job is
@@ -260,7 +279,7 @@ assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation still delayed after " ..
 	"1 attempt: ", 1, true) == 1, pre_run_message)
 assert(string.find(pre_run_message, "status 10", 1, true))
-assert(read_calls() == "reserve\ncancel:52\n")
+assert(read_calls() == "reserve\n" .. gave_up(52, pre_run_message))
 assert(#logged == 1)
 assert(string.find(logged[1], "job 52: cancelling: QPM reservation still " ..
 	"delayed", 1, true))
@@ -274,7 +293,7 @@ pre_run_status, pre_run_message = slurm_bb_pre_run(53, job_script, 1001,
 assert(pre_run_status == slurm.ERROR)
 assert(string.find(pre_run_message, "QPM reservation still delayed after " ..
 	"1 attempt: ", 1, true) == 1, pre_run_message)
-assert(read_calls() == "reserve\ncancel:53\n")
+assert(read_calls() == "reserve\n" .. gave_up(53, pre_run_message))
 
 -- The wait budget ends a delay that never clears. os.time() has whole
 -- second resolution, so with a 1 s budget and 0.3 s waits the loop makes
@@ -289,6 +308,7 @@ assert(pre_run_status == slurm.ERROR)
 local waited = tonumber(string.match(pre_run_message,
 	"^QPM reservation still delayed after (%d+) attempts: "))
 assert(waited ~= nil and waited >= 2 and waited <= 5, pre_run_message)
-assert(read_calls() == string.rep("reserve\n", waited) .. "cancel:54\n")
+assert(read_calls() == string.rep("reserve\n", waited) ..
+	gave_up(54, pre_run_message))
 assert(#logged == waited)
 assert(string.find(logged[waited - 1], "waiting 0.3 s", 1, true))

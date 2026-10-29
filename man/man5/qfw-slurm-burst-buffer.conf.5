@@ -30,6 +30,20 @@ Set the SlurmUser-owned directory containing allocation JSON and environment
 records. Compute-node slurmstepd processes must see the same path when the
 SPANK module injects application context.
 .TP
+.BI scancel = "path"
+Set the absolute path to the
+.BR scancel (1)
+executable pre-run uses to cancel a job it gives up on. The default is
+.IR /usr/bin/scancel .
+.TP
+.BI scontrol = "path"
+Set the absolute path to the
+.BR scontrol (1)
+executable pre-run uses to record the reason in the job's
+.B AdminComment
+before it cancels the job. The default is
+.IR /usr/bin/scontrol .
+.TP
 .BI max_reservation_attempts = count
 Set the positive maximum number of final reservation attempts the helper
 makes for one job. The attempts pre-run makes while a QPM reports a delay
@@ -77,6 +91,8 @@ return {
         driver = "/usr/bin/qfw-slurm-driver",
         plugin_config = "/etc/openqse/qfw-slurm/plugin.conf",
         state_dir = "/var/lib/qfw-slurm/allocations",
+        scancel = "/usr/bin/scancel",
+        scontrol = "/usr/bin/scontrol",
         max_reservation_attempts = 8,
         reservation_retries = 3,
         reservation_retry_delay = 2,

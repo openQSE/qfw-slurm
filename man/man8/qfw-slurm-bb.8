@@ -28,9 +28,10 @@ the authoritative tuples. Exit status 10 means a QPM reports a delay; the Lua
 provider pauses and reserves again, with the nodes assigned, until the QPM
 accepts, the attempt limit is exhausted or its wait budget ends. Status 20 is
 permanent rejection or attempt exhaustion. Status 30 is a transient failure,
-which the Lua provider retries a bounded number of times. The provider
-cancels the job whenever it gives up, because Slurm would otherwise requeue
-it in a state it never schedules again. See
+which the Lua provider retries a bounded number of times. Whenever the
+provider gives up it records the reason in the job's AdminComment and
+cancels the job, because Slurm would otherwise requeue it in a state it
+never schedules again. See
 .BR qfw-slurm-burst-buffer.conf (5)
 and
 .BR qfw-slurm (7).

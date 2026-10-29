@@ -16,6 +16,8 @@ local state_dir = os.getenv("QFW_SLURM_STATE_DIR") or settings.state_dir or
 	"/var/lib/qfw-slurm/allocations"
 local scancel = os.getenv("QFW_SLURM_SCANCEL") or settings.scancel or
 	"/usr/bin/scancel"
+local scontrol = os.getenv("QFW_SLURM_SCONTROL") or settings.scontrol or
+	"/usr/bin/scontrol"
 local max_reservation_attempts = settings.max_reservation_attempts or 8
 local reservation_retries = tonumber(settings.reservation_retries) or 3
 local reservation_retry_delay = tonumber(settings.reservation_retry_delay) or 2
@@ -180,9 +182,24 @@ end
 -- job_independent() treats that reason as a hold: the job keeps its
 -- priority, is not reported as held and is never scheduled again until an
 -- operator runs scontrol release. A cancelled job is a visible failure.
+--
+-- The reason goes into the job's AdminComment first. Slurm ends the running
+-- pre-run hook as part of the cancel, so the error message returned below
+-- never reaches the job record and the job would only show "CANCELLED by
+-- <SlurmUser>". scontrol show job and sacct report the comment, and
+-- accounting keeps it without any AccountingStoreFlags setting.
+local function comment_job(job_id, message)
+	if not string.match(tostring(job_id), "^[0-9]+$") then
+		return
+	end
+	os.execute(quote(scontrol) .. " update JobId=" .. tostring(job_id) ..
+		" " .. quote("AdminComment=slurm_bb_pre_run: " .. message))
+end
+
 local function fail_job(job_id, message)
 	log_info(string.format("slurm_bb_pre_run: job %s: cancelling: %s",
 		tostring(job_id), message))
+	comment_job(job_id, message)
 	cancel_job(job_id)
 	return slurm.ERROR, message
 end
