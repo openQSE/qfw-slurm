@@ -58,6 +58,11 @@ class Admission:
         return {"status": "released"}
 
 
+class FailingReleaseAdmission(Admission):
+    def release(self, reservation_id, reason):
+        raise RuntimeError("peer lost")
+
+
 class ManagedBinding:
     def __init__(self, service_id, **kwargs):
         self.service_id = service_id
@@ -211,6 +216,57 @@ def test_evaluate_rejects_reservation_id() -> None:
 
     with pytest.raises(QFwAdapterError, match="returned a reservation ID"):
         QFwAdapter("/site.yaml").evaluate(binding, request, job)
+
+
+def evaluation_fixture():
+    request = EvaluateRequest(
+        7,
+        "cluster",
+        42,
+        1001,
+        1002,
+        Workload(WorkloadKind.QUANTUM, 10, 1, 2, 3, 4),
+        ("nwqsim",),
+    )
+    job = VerifiedJob(
+        "cluster", 42, 1001, 1002, "user-a", None, None, None, "PENDING"
+    )
+    return request, job
+
+
+def test_evaluate_releases_returned_reservation() -> None:
+    admission = Admission({"status": "accepted", "reservation_id": 41})
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request, job = evaluation_fixture()
+
+    with pytest.raises(QFwAdapterError, match="returned a reservation ID"):
+        QFwAdapter("/site.yaml").evaluate(binding, request, job)
+    assert admission.releases == [(41, 1)]
+
+
+def test_evaluate_releases_returned_reservation_whatever_the_status() -> None:
+    admission = Admission({"status": "delayed", "reservation_id": "42"})
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request, job = evaluation_fixture()
+
+    with pytest.raises(QFwAdapterError, match="returned a reservation ID"):
+        QFwAdapter("/site.yaml").evaluate(binding, request, job)
+    assert admission.releases == [(42, 1)]
+
+
+def test_evaluate_reports_failed_reservation_cleanup() -> None:
+    admission = FailingReleaseAdmission(
+        {"status": "accepted", "reservation_id": 41}
+    )
+    binding = QPMBinding("nwqsim", "runtime", 1, admission)
+    request, job = evaluation_fixture()
+
+    with pytest.raises(QFwAdapterError) as failure:
+        QFwAdapter("/site.yaml").evaluate(binding, request, job)
+    message = str(failure.value)
+    assert "QPM evaluation returned a reservation ID" in message
+    assert "evaluation cleanup failed" in message
+    assert "release failed: peer lost" in message
 
 
 def test_accepted_reservation_requires_nonzero_id() -> None:

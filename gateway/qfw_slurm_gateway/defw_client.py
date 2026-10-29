@@ -191,7 +191,22 @@ class QFwAdapter:
             raise QFwAdapterError(
                 f"QPM {binding.service_id!r} evaluate failed: {error}"
             ) from error
-        return self._normalize_admission(binding, raw, reserve=False)
+        try:
+            return self._normalize_admission(binding, raw, reserve=False)
+        except QFwAdapterError as error:
+            # An evaluation holds nothing, so a reservation id in the reply
+            # is one the QPM created and nothing else will release. The
+            # provider repeats a failed evaluation on every stage-in poll,
+            # so each poll would create another.
+            reservation_id = _returned_reservation_id(raw)
+            if reservation_id is not None:
+                try:
+                    self.release(binding, reservation_id, 1)
+                except QFwAdapterError as cleanup_error:
+                    raise QFwAdapterError(
+                        f"{error}; evaluation cleanup failed: {cleanup_error}"
+                    ) from error
+            raise
 
     def _admission_payload(
         self, request: ReserveRequest, job: VerifiedJob
@@ -327,6 +342,14 @@ def _accepted_reservation_id(value: Any) -> int | None:
         not isinstance(value, dict)
         or str(value.get("status", "")).lower() != "accepted"
     ):
+        return None
+    return _returned_reservation_id(value)
+
+
+def _returned_reservation_id(value: Any) -> int | None:
+    """Return the valid reservation id in a QPM reply, whatever its status."""
+
+    if not isinstance(value, dict):
         return None
     try:
         reservation_id = int(value.get("reservation_id"))

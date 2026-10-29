@@ -40,7 +40,7 @@ from .protocol import (
     response_from_dict,
     response_to_dict,
 )
-from .slurm_verifier import SlurmVerificationError, SlurmVerifier
+from .slurm_verifier import SlurmVerificationError, SlurmVerifier, VerifiedJob
 
 
 def _fingerprint(value: Any) -> str:
@@ -92,8 +92,10 @@ def _error(code: GatewayError, request_id: int, detail: object) -> ErrorResponse
     return ErrorResponse(code, request_id, bounded_diagnostic(detail))
 
 
-def _reserve_error(request_id: int, error: Exception) -> ErrorResponse:
-    """Map a reserve failure to the error response the provider receives."""
+def _operation_error(
+    operation: str, request_id: int, error: Exception
+) -> ErrorResponse:
+    """Map a failed operation to the error response the provider receives."""
 
     if isinstance(error, RequestConflict):
         return _error(GatewayError.REQUEST_CONFLICT, request_id, error)
@@ -106,7 +108,7 @@ def _reserve_error(request_id: int, error: Exception) -> ErrorResponse:
     return _error(
         GatewayError.INTERNAL,
         request_id,
-        f"unexpected reserve failure: {error}",
+        f"unexpected {operation} failure: {error}",
     )
 
 
@@ -235,17 +237,13 @@ class GatewayService:
                 if not isinstance(response, EvaluateResponse):
                     raise JournalError("stored evaluate response has wrong type")
                 return response
-            results = []
-            for service_id in sorted(request.service_ids):
-                binding = await asyncio.to_thread(self.adapter.resolve, service_id)
-                result = await asyncio.to_thread(
-                    self.adapter.evaluate, binding, request, job
+            try:
+                results = await self._evaluate_services(request, job)
+            except Exception as error:
+                self._journal_failed_evaluation(
+                    request, sender_uid, scope, error
                 )
-                if result.reservation_id is not None:
-                    raise QFwAdapterError(
-                        f"QPM {service_id!r} evaluation returned a reservation"
-                    )
-                results.append(result)
+                raise
             decisions = {item.decision for item in results}
             if AdmissionDecision.REJECTED in decisions:
                 decision = AdmissionDecision.REJECTED
@@ -253,9 +251,7 @@ class GatewayService:
                 decision = AdmissionDecision.DELAYED
             else:
                 decision = AdmissionDecision.ACCEPTED
-            response = EvaluateResponse(
-                request.request_id, decision, tuple(results)
-            )
+            response = EvaluateResponse(request.request_id, decision, results)
             state = (
                 "retryable"
                 if decision == AdmissionDecision.DELAYED
@@ -270,20 +266,52 @@ class GatewayService:
                 state,
             )
             return response
-        except RequestConflict as error:
-            return _error(GatewayError.REQUEST_CONFLICT, request.request_id, error)
-        except SlurmVerificationError as error:
-            return _error(GatewayError.UNAUTHORIZED, request.request_id, error)
-        except QFwAdapterError as error:
-            return _error(GatewayError.QPM, request.request_id, error)
-        except JournalError as error:
-            return _error(GatewayError.INTERNAL, request.request_id, error)
         except Exception as error:
-            return _error(
-                GatewayError.INTERNAL,
-                request.request_id,
-                f"unexpected evaluate failure: {error}",
+            return _operation_error("evaluate", request.request_id, error)
+
+    def _journal_failed_evaluation(
+        self,
+        request: EvaluateRequest,
+        sender_uid: int,
+        scope: str,
+        error: Exception,
+    ) -> None:
+        """Journal an evaluation that failed before it reached a decision.
+
+        An evaluation holds nothing, so the operation may be repeated under
+        its request id, as a delayed evaluation may. The Slurm provider
+        reports a failed evaluation as busy and polls stage-in again under
+        the same request id, and each poll must reach the QPMs again. The
+        stored error response records why the attempt failed. It is never
+        replayed.
+        """
+
+        self.journal.complete_operation(
+            sender_uid,
+            "evaluate",
+            request.request_id,
+            response_to_dict(
+                _operation_error("evaluate", request.request_id, error)
+            ),
+            scope,
+            "retryable",
+        )
+
+    async def _evaluate_services(
+        self, request: EvaluateRequest, job: VerifiedJob
+    ) -> tuple[ServiceResult, ...]:
+        results = []
+        for service_id in sorted(request.service_ids):
+            binding = await asyncio.to_thread(self.adapter.resolve, service_id)
+            result = await asyncio.to_thread(
+                self.adapter.evaluate, binding, request, job
             )
+            if result.reservation_id is not None:
+                raise QFwAdapterError(
+                    f"QPM {service_id!r} evaluation returned a reservation"
+                )
+            results.append(result)
+        return tuple(results)
 
     async def _reserve(
         self, request: ReserveRequest, sender_uid: int
@@ -420,7 +448,7 @@ class GatewayService:
             )
             return response
         except Exception as error:
-            return _reserve_error(request.request_id, error)
+            return _operation_error("reserve", request.request_id, error)
 
     def _journal_failed_attempt(
         self,
@@ -440,7 +468,9 @@ class GatewayService:
         every repeat is refused while the journal shows the unresolved rows.
         """
 
-        failure = response_to_dict(_reserve_error(request.request_id, error))
+        failure = response_to_dict(
+            _operation_error("reserve", request.request_id, error)
+        )
         if not plan.is_extension:
             self.journal.complete_allocation(
                 request.cluster_name,
