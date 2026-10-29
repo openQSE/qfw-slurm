@@ -17,6 +17,10 @@ local state_dir = os.getenv("QFW_SLURM_STATE_DIR") or settings.state_dir or
 local scancel = os.getenv("QFW_SLURM_SCANCEL") or settings.scancel or
 	"/usr/bin/scancel"
 local max_reservation_attempts = settings.max_reservation_attempts or 8
+local reservation_retries = tonumber(settings.reservation_retries) or 3
+local reservation_retry_delay = tonumber(settings.reservation_retry_delay) or 2
+local reservation_retry_budget = tonumber(settings.reservation_retry_budget) or
+	60
 
 local function quote(value)
 	value = tostring(value)
@@ -100,6 +104,45 @@ local function cancel_job(job_id)
 	os.execute(quote(scancel) .. " --quiet " .. tostring(job_id))
 end
 
+local function log_info(message)
+	if slurm.log_info ~= nil then
+		slurm.log_info("%s", message)
+	end
+end
+
+local function pause(seconds)
+	if seconds > 0 then
+		os.execute("sleep " .. quote(seconds))
+	end
+end
+
+-- Run the final reservation again after a transient helper failure. A
+-- pre-run failure makes Slurm tear the job down and requeue it, so a
+-- dropped gateway connection must not reach Slurm as a failure while a
+-- short pause would have cured it. Delayed (10) and rejected (20) results
+-- are decisions, not failures, and are never retried here.
+local function reserve(job_id, job_script, uid, gid, job_info)
+	local attempts = 1 + math.max(0, math.floor(reservation_retries))
+	local delay = math.max(0, reservation_retry_delay)
+	local started = os.time()
+	local attempt = 1
+	local status, message = run_helper("reserve", job_id, job_script, uid,
+		gid, job_info)
+	while status ~= 0 and status ~= 10 and status ~= 20 and
+		attempt < attempts and
+		os.time() - started + delay <= reservation_retry_budget do
+		log_info(string.format("slurm_bb_pre_run: job %s: QPM reservation " ..
+			"attempt %d of %d failed (%s), retrying in %s s",
+			tostring(job_id), attempt, attempts, message, tostring(delay)))
+		pause(delay)
+		delay = delay * 2
+		attempt = attempt + 1
+		status, message = run_helper("reserve", job_id, job_script, uid,
+			gid, job_info)
+	end
+	return status, message, attempt
+end
+
 function slurm_bb_job_process(job_script, uid, gid, job_info)
 	local stream = io.open(job_script, "r")
 	if stream == nil then
@@ -163,8 +206,8 @@ function slurm_bb_paths(job_id, job_script, path_file, uid, gid, job_info)
 end
 
 function slurm_bb_pre_run(job_id, job_script, uid, gid, job_info)
-	local status, message = run_helper("reserve", job_id, job_script,
-		uid, gid, job_info)
+	local status, message, attempts = reserve(job_id, job_script, uid, gid,
+		job_info)
 	if status == 0 then
 		return slurm.SUCCESS
 	end
@@ -172,7 +215,12 @@ function slurm_bb_pre_run(job_id, job_script, uid, gid, job_info)
 		cancel_job(job_id)
 		return slurm.ERROR, "QPM reservation rejected: " .. message
 	end
-	return slurm.ERROR, "QPM reservation retry required: " .. message
+	if status == 10 then
+		return slurm.ERROR, "QPM reservation retry required: " .. message
+	end
+	local noun = attempts == 1 and " attempt: " or " attempts: "
+	return slurm.ERROR, "QPM reservation failed after " ..
+		tostring(attempts) .. noun .. message
 end
 
 function slurm_bb_post_run(job_id, job_script, uid, gid, job_info)
