@@ -161,6 +161,24 @@ class RollbackFailingAdapter(FailOnceAdapter):
         raise RuntimeError("configured release failure")
 
 
+class FailOnceEvaluateAdapter(FakeAdapter):
+    """Fail the first evaluation of one service inside the gateway."""
+
+    def __init__(self, failing_service):
+        super().__init__()
+        self.failing_service = failing_service
+        self.failed = False
+
+    def evaluate(self, binding, request, job):
+        if binding.service_id == self.failing_service and not self.failed:
+            self.failed = True
+            self.evaluates.append(binding.service_id)
+            raise QFwAdapterError(
+                f"QPM {binding.service_id!r} evaluate failed: DEFw peer lost"
+            )
+        return super().evaluate(binding, request, job)
+
+
 class CapacityOneAdapter(FakeAdapter):
     def __init__(self):
         super().__init__()
@@ -324,6 +342,84 @@ async def _delayed_evaluation_calls_qpm_on_each_poll(tmp_path) -> None:
     assert accepted.decision == AdmissionDecision.ACCEPTED
     assert adapter.evaluates.count("svc-a") == 2
     assert adapter.evaluates.count("svc-b") == 2
+    journal.close()
+
+
+def test_failed_evaluation_is_repeated_under_the_same_request_id(
+    tmp_path,
+) -> None:
+    asyncio.run(
+        _failed_evaluation_is_repeated_under_the_same_request_id(tmp_path)
+    )
+
+
+async def _failed_evaluation_is_repeated_under_the_same_request_id(
+    tmp_path,
+) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailOnceEvaluateAdapter("svc-b")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(evaluate_request(10), 1001)
+    accepted = await service.handle(evaluate_request(10), 1001)
+    replay = await service.handle(evaluate_request(10), 1001)
+
+    assert failed.error_code == GatewayError.QPM
+    assert "DEFw peer lost" in failed.diagnostic
+    assert isinstance(accepted, EvaluateResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert replay == accepted
+    assert adapter.evaluates == ["svc-a", "svc-b", "svc-a", "svc-b"]
+    assert adapter.reserves == []
+    assert adapter.releases == []
+    assert journal.allocation_status("cluster", 100)["state"] == "not-found"
+    journal.close()
+
+
+def test_failed_evaluation_is_repeated_under_a_new_request_id(
+    tmp_path,
+) -> None:
+    asyncio.run(
+        _failed_evaluation_is_repeated_under_a_new_request_id(tmp_path)
+    )
+
+
+async def _failed_evaluation_is_repeated_under_a_new_request_id(
+    tmp_path,
+) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailOnceEvaluateAdapter("svc-a")
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(evaluate_request(10), 1001)
+    accepted = await service.handle(evaluate_request(11), 1001)
+    late = await service.handle(evaluate_request(10), 1001)
+
+    assert failed.error_code == GatewayError.QPM
+    assert isinstance(accepted, EvaluateResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert late == dataclasses.replace(accepted, request_id=10)
+    assert adapter.evaluates == ["svc-a", "svc-a", "svc-b", "svc-a", "svc-b"]
+    journal.close()
+
+
+def test_evaluation_resolve_failure_is_repeated(tmp_path) -> None:
+    asyncio.run(_evaluation_resolve_failure_is_repeated(tmp_path))
+
+
+async def _evaluation_resolve_failure_is_repeated(tmp_path) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FailingAdapter()
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    failed = await service.handle(evaluate_request(10), 1001)
+    repeated = await service.handle(evaluate_request(10), 1001)
+
+    assert failed.error_code == GatewayError.INTERNAL
+    assert "directory unavailable" in failed.diagnostic
+    assert repeated == failed
+    assert "requires recovery" not in repeated.diagnostic
+    assert adapter.evaluates == ["svc-a", "svc-a"]
     journal.close()
 
 
