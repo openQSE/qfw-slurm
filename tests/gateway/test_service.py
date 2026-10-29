@@ -414,6 +414,42 @@ async def _delayed_final_reserve_retries_with_new_operation(tmp_path) -> None:
     journal.close()
 
 
+def test_delayed_final_reserve_retries_with_the_same_operation(tmp_path) -> None:
+    asyncio.run(_delayed_final_reserve_retries_with_the_same_operation(tmp_path))
+
+
+async def _delayed_final_reserve_retries_with_the_same_operation(
+    tmp_path,
+) -> None:
+    journal = Journal(tmp_path / "state.db")
+    adapter = FakeAdapter(
+        {
+            "svc-a": [
+                AdmissionDecision.DELAYED,
+                AdmissionDecision.DELAYED,
+                AdmissionDecision.ACCEPTED,
+            ]
+        }
+    )
+    service = GatewayService(journal, FakeVerifier(), adapter)
+
+    first = await service.handle(request(10), 1001)
+    second = await service.handle(request(10), 1001)
+    accepted = await service.handle(request(10), 1001)
+    replay = await service.handle(request(10), 1001)
+
+    assert isinstance(first, ReserveResponse)
+    assert first.decision == AdmissionDecision.DELAYED
+    assert isinstance(second, ReserveResponse)
+    assert second.decision == AdmissionDecision.DELAYED
+    assert isinstance(accepted, ReserveResponse)
+    assert accepted.decision == AdmissionDecision.ACCEPTED
+    assert replay == accepted
+    assert adapter.reserves == ["svc-a", "svc-a", "svc-a", "svc-b"]
+    assert journal.allocation_status("cluster", 100)["state"] == "accepted"
+    journal.close()
+
+
 async def _partial_reserve_is_rolled_back(tmp_path) -> None:
     journal = Journal(tmp_path / "state.db")
     adapter = FakeAdapter({"svc-b": AdmissionDecision.REJECTED})

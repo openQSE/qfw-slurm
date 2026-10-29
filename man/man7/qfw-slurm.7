@@ -82,20 +82,35 @@ A delayed evaluation leaves the job pending without compute nodes and without
 a QPM reservation. Slurm owns repeated stage-in polling. The gateway performs
 one QPM evaluation per request and never polls autonomously.
 .PP
-After every classical component is assigned, pre-run makes one final reserve
-request. Acceptance permits execution. Delay makes Slurm deallocate the nodes
-and retry through its normal burst-buffer scheduling path. The configured
-attempt limit converts repeated final delay into terminal rejection.
+After every classical component is assigned, pre-run makes the final reserve
+request. Acceptance permits execution. A delay, which means that QPM capacity
+changed after the evaluation, keeps the nodes assigned while pre-run pauses
+and reserves again, until the QPM accepts, the configured attempt limit
+converts the repeated delay into a rejection, or the wait budget ends.
 .PP
 A transient reserve failure, such as a dropped gateway connection, is retried
 inside pre-run with a pause that doubles each time, while the nodes stay
-assigned. Slurm sees the failure only when every retry fails. The retry count,
-first pause and time budget are set in
+assigned. The retry count, the pauses and both time budgets are set in
 .BR qfw-slurm-burst-buffer.conf (5).
 .PP
-Permanent admission rejection cancels the complete allocation. Teardown always
-returns success to Slurm after attempting release, while unresolved release
-details remain in protected state and the gateway journal.
+Pre-run never reports a failure to Slurm without cancelling the job first.
+Slurm 25.05 requeues a job whose pre-run hook failed with the state reason
+.BR BurstBufferOperation ,
+and slurmctld treats that reason as a hold without reporting the job as held,
+so the job would stay pending at its priority until an operator released it.
+A permanent admission rejection, an exhausted attempt limit or an exhausted
+budget therefore cancels the complete allocation. Before it cancels, pre-run
+writes the reason into the job's
+.BR AdminComment ,
+which
+.B scontrol show job
+and
+.B sacct
+report, because Slurm ends the running hook as part of the cancel and the
+hook's own error message never reaches the job record. The slurmctld log
+carries the same message. Teardown always returns success to Slurm after
+attempting release, while unresolved release details remain in protected
+state and the gateway journal.
 .SH RESERVATION ENVIRONMENT
 Every application step receives
 .B QFW_RESERVATIONS
@@ -125,8 +140,8 @@ different provider must combine the behavior or use another controller
 integration.
 .PP
 Evaluation is non-binding. Capacity may disappear before final reserve. This
-is why a delayed final decision deallocates nodes and retries rather than
-starting the application.
+is why pre-run waits for a delayed final decision, with the nodes assigned,
+rather than starting the application or handing the job back to Slurm.
 .SH SEE ALSO
 .BR qfw-slurm-driver (1),
 .BR qfw-slurm-burst-buffer.conf (5),

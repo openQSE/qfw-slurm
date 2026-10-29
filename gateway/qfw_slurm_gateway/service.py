@@ -379,12 +379,17 @@ class GatewayService:
                     state,
                     encoded,
                 )
+            # A delay is not a terminal outcome for the operation. The Slurm
+            # provider repeats the same reserve request from pre-run while a
+            # QPM reports a delay, and each repeat must reach the QPMs again,
+            # as a repeated delayed evaluation does.
             self.journal.complete_operation(
                 sender_uid,
                 "reserve",
                 request.request_id,
                 encoded,
                 scope,
+                "retryable" if state == "delayed" else "complete",
             )
             return response
         except RequestConflict as error:
