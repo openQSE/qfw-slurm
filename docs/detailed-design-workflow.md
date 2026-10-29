@@ -24,15 +24,17 @@ The completed workflow has the following properties.
 
 - A delayed preliminary evaluation leaves the Slurm allocation pending without
   holding quantum capacity or classical nodes.
-- A delayed final reservation releases the newly assigned classical nodes and
-  requeues the complete Slurm allocation.
-- A permanent QPM rejection fails the complete Slurm allocation.
+- A delayed final reservation keeps the newly assigned classical nodes while
+  pre-run reserves again at a fixed interval, within a bounded wait.
+- A permanent QPM rejection, an exhausted retry, or an exhausted wait cancels
+  the complete Slurm allocation.
 - An accepted decision produces one reservation tuple per requested QPM.
 - Every application step receives the same accepted reservation set.
 - Allocation completion or cancellation causes one best-effort release.
 - The gateway performs at most one evaluation per requested QPM for each Slurm
-  poll and one final reservation attempt after node assignment. Slurm owns
-  evaluation polling and requeue behavior.
+  poll and one reservation attempt for each pre-run request after node
+  assignment. Slurm owns evaluation polling. `burst_buffer/lua` owns the
+  bounded retry and wait during pre-run.
 
 This is an optimistic, two-phase stop-gap rather than an atomic transaction
 between Slurm and QPMd. `QFW_GW_EVALUATE` is deliberately non-binding. It
@@ -72,39 +74,39 @@ sequenceDiagram
     Submit-->>Allocator: Accept job description
     Allocator-->>User: Allocation is pending
 
-    loop Until final reservation accepts or permanently rejects
-        loop While preliminary evaluation is delayed
-            Scheduler->>BB: Test QFw stage-in before node allocation
-            BB->>Helper: Evaluate quantum directive for job
-            Helper->>Gateway: QSGP QFW_GW_EVALUATE request
-            Gateway->>Gateway: Authenticate sender and verify pending Slurm job
-            Gateway->>Directory: Resolve exact requested QPM service IDs
-            Directory-->>Gateway: QPM admission bindings and generations
-            loop Each requested QPM service
-                Gateway->>QPM: evaluate(request_id, owner, workload)
-                QPM->>Admission: Evaluate without holding capacity
-                Admission-->>QPM: ACCEPTED, DELAYED, or REJECTED
-                QPM-->>Gateway: Normalized evaluation
-            end
-
-            alt At least one evaluation is delayed
-                Gateway-->>Helper: DELAYED with retry guidance
-                Helper-->>BB: BUSY
-                BB-->>Scheduler: Keep job pending without nodes
-            else An evaluation permanently rejects the request
-                Gateway-->>Helper: REJECTED with reason
-                Helper-->>BB: Permanent stage-in failure
-                BB->>Scheduler: Cancel the complete allocation
-                Scheduler-->>User: salloc or sbatch allocation fails
-            else Every service appears admissible
-                Gateway-->>Helper: ACCEPTED without reservation IDs
-                Helper-->>BB: Stage-in complete
-                BB-->>Scheduler: Node selection may proceed
-            end
+    loop While preliminary evaluation is delayed
+        Scheduler->>BB: Test QFw stage-in before node allocation
+        BB->>Helper: Evaluate quantum directive for job
+        Helper->>Gateway: QSGP QFW_GW_EVALUATE request
+        Gateway->>Gateway: Authenticate sender and verify pending Slurm job
+        Gateway->>Directory: Resolve exact requested QPM service IDs
+        Directory-->>Gateway: QPM admission bindings and generations
+        loop Each requested QPM service
+            Gateway->>QPM: evaluate(request_id, owner, workload)
+            QPM->>Admission: Evaluate without holding capacity
+            Admission-->>QPM: ACCEPTED, DELAYED, or REJECTED
+            QPM-->>Gateway: Normalized evaluation
         end
 
-        Scheduler->>Scheduler: Select and allocate all classical components
-        Scheduler->>BB: Run pre-run before application start
+        alt At least one evaluation is delayed
+            Gateway-->>Helper: DELAYED with retry guidance
+            Helper-->>BB: BUSY
+            BB-->>Scheduler: Keep job pending without nodes
+        else An evaluation permanently rejects the request
+            Gateway-->>Helper: REJECTED with reason
+            Helper-->>BB: Permanent stage-in failure
+            BB->>Scheduler: Cancel the complete allocation
+            Scheduler-->>User: salloc or sbatch allocation fails
+        else Every service appears admissible
+            Gateway-->>Helper: ACCEPTED without reservation IDs
+            Helper-->>BB: Stage-in complete
+            BB-->>Scheduler: Node selection may proceed
+        end
+    end
+
+    Scheduler->>Scheduler: Select and allocate all classical components
+    Scheduler->>BB: Run pre-run before application start
+    loop Until a reservation accepts or rejects, within the retry and wait budgets
         BB->>Helper: Finalize quantum reservation
         Helper->>Gateway: QSGP QFW_GW_RESERVE request
         Gateway->>Directory: Resolve exact requested QPM service IDs
@@ -123,17 +125,25 @@ sequenceDiagram
             Helper-->>BB: Pre-run complete
         else Capacity changed and a reservation is delayed
             Gateway->>QPM: Release reservations accepted by this attempt
+            Gateway->>Gateway: Journal the operation as retryable
             Gateway-->>Helper: DELAYED with retry guidance
-            Helper-->>BB: Retryable pre-run failure
-            BB->>Scheduler: Deallocate every component and requeue job
-            Scheduler-->>Allocator: Restart evaluation and allocation cycle
+            Helper-->>BB: Delayed, one attempt counted
+            BB->>BB: Keep the nodes and pause for one wait interval
+        else The attempt fails before a decision
+            Gateway->>QPM: Release reservations accepted by this attempt, if any
+            Gateway->>Gateway: Journal the allocation rolled back and the operation retryable
+            Helper-->>BB: Transient failure
+            BB->>BB: Keep the nodes and pause, doubling the pause each time
         else A reservation permanently rejects the request
             Gateway->>QPM: Release reservations accepted by this attempt
             Gateway-->>Helper: REJECTED with reason
             Helper-->>BB: Permanent pre-run failure
-            BB->>Scheduler: Deallocate every component and fail allocation
-            Scheduler-->>User: salloc or sbatch allocation fails
         end
+    end
+
+    opt Pre-run gave up on a rejection, an exhausted retry, or an exhausted wait
+        BB->>Scheduler: Record the reason in AdminComment and cancel the complete allocation
+        Scheduler-->>User: salloc or sbatch allocation fails
     end
 
     Scheduler-->>User: Allocation granted
@@ -214,9 +224,9 @@ QPM sharing below the capacity allowed by qhw-admission.
 | Allocator SPANK adapter | Register and validate user-facing options, then let Slurm copy them into `spank_job_env` | Directory lookup, gateway communication, reservation, release, and application environment mutation |
 | Remote SPANK adapter | Retrieve accepted tuples from the gateway and inject `QFW_RESERVATIONS` before each application step | Evaluation, reservation, release, polling, directory lookup, or reading controller state |
 | `job_submit/lua` | Read trusted SPANK option metadata, apply static site policy, and construct the internal burst-buffer directive | Network I/O or QPM admission while slurmctld locks are held |
-| `burst_buffer/lua` | Connect Slurm's pending, begin, cancel, completion, and teardown states to small qfw-slurm helpers | QPM selection or admission policy |
-| Burst-buffer helper | Parse the internal directive, issue one evaluation per Slurm poll, issue one final reservation attempt during pre-run, maintain protected Slurm-side state, and translate each result into a burst-buffer status | Autonomous polling or capacity decisions |
-| Gateway | Authenticate the Slurm service, verify the Slurm job, resolve exact services, forward QPM calls, and journal terminal outcomes | Polling, provider selection, or independent scheduling |
+| `burst_buffer/lua` | Connect Slurm's pending, begin, cancel, completion, and teardown states to small qfw-slurm helpers, retry and wait within the configured budgets during pre-run, and cancel the job before reporting a pre-run failure | QPM selection or admission policy |
+| Burst-buffer helper | Parse the internal directive, issue one evaluation per Slurm poll, issue one reservation attempt per pre-run call and count it against the attempt limit, maintain protected Slurm-side state, and translate each result into a burst-buffer status | Autonomous polling or capacity decisions |
+| Gateway | Authenticate the Slurm service, verify the Slurm job, resolve exact services, forward QPM calls, and journal each outcome, leaving a delayed or rolled-back reserve retryable | Polling, provider selection, or independent scheduling |
 | QPMd | Evaluate requests without holding capacity, commit final reservations, validate entitlement and credentials, invoke qhw-admission, own reservation IDs, and authorize execution | Slurm node scheduling |
 | QFw application backend | Parse `QFW_RESERVATIONS`, resolve the selected service through the directory, and attach the reservation ID to execution calls | Creating or releasing the allocation reservation |
 
@@ -233,15 +243,17 @@ development branch available during design.
 | `src/common/spank.c` and `src/common/slurm_opt.c` | Allocator SPANK options become `_SLURM_SPANK_OPTION_*` entries in `job_desc.spank_job_env`. |
 | `src/plugins/job_submit/lua/job_submit_lua.c` | Lua can read `spank_job_env` and assign `job_desc.burst_buffer`. |
 | `src/interfaces/job_submit.c` | Job-submit callbacks execute while controller configuration, job, node, and partition read locks are held. |
-| `src/slurmctld/job_mgr.c` | Job-submit processing precedes burst-buffer validation and creation of the persistent job record. |
+| `src/slurmctld/job_mgr.c` | Job-submit processing precedes burst-buffer validation and creation of the persistent job record. `job_independent()` returns false for a job whose state reason is `FAIL_BURST_BUFFER_OP`, exactly as for a held job, so a job requeued after a pre-run failure never re-enters the scheduling queue until an operator runs `scontrol release`. |
 | `src/slurmctld/node_scheduler.c` | `bb_g_job_test_stage_in()` completes before `allocate_nodes()` commits compute nodes. |
-| `src/plugins/burst_buffer/lua/burst_buffer_lua.c` | `SLURM_BB_BUSY` causes bounded-interval polling; pre-run executes after node assignment; a pre-run failure can deallocate nodes and requeue the job; completion and cancellation queue teardown. The paths callback runs before asynchronous pre-run and therefore cannot export a reservation created by pre-run. |
+| `src/plugins/burst_buffer/lua/burst_buffer_lua.c` | `SLURM_BB_BUSY` causes bounded-interval polling; pre-run executes after node assignment; a pre-run failure tears the burst buffer down, deallocates the nodes, and requeues the job with the state reason `FAIL_BURST_BUFFER_OP`, after which the job is not scheduled again; completion and cancellation queue teardown. The paths callback runs before asynchronous pre-run and therefore cannot export a reservation created by pre-run. |
 | `src/common/env.c` | Burst-buffer environment is unqualified for ordinary allocations and receives `HET_GROUP_N` and `PACK_GROUP_N` suffixes for heterogeneous allocations. |
 | `src/interfaces/burst_buffer.c` | Slurm permits only one configured burst-buffer provider. |
 
 The same source shows that a permanent stage-in failure holds the job rather
-than cancelling it. The desired cancellation behavior therefore requires an
-additional, explicitly tested controller action.
+than cancelling it, and that a pre-run failure requeues the job into a state
+Slurm never schedules again. The desired cancellation behavior therefore
+requires an additional, explicitly tested controller action, and pre-run must
+cancel the job before it reports any failure to Slurm.
 
 **Status:** draft
 
@@ -297,8 +309,9 @@ request. Its response carries the normalized admission decision, reason,
 diagnostic, estimated timing, and retry guidance, but it cannot carry an
 accepted reservation ID. The later reserve request is a new operation for the
 same allocation attempt. Its idempotency key is stable across transport retries
-but changes after Slurm requeues the job for another evaluate-and-reserve
-cycle.
+and across the repeated attempts one pre-run makes. The gateway leaves a
+delayed or rolled-back reserve retryable under that key, so each repeat asks
+the QPMs again instead of replaying a stored decision.
 
 `QFW_GW_EVALUATE` does not create a lease, queue position, capacity hold, or
 claim on a future admission decision. Adding any of those guarantees would
@@ -355,8 +368,8 @@ admissible. There is nothing to roll back because evaluation holds no capacity.
 ### Final reservation during pre-run
 
 After Slurm assigns every classical component, `slurm_bb_pre_run` invokes the
-helper once with `QFW_GW_RESERVE`. This is the first operation that may commit
-QPM capacity. The application remains blocked until the complete multi-service
+helper with `QFW_GW_RESERVE`. This is the first operation that may commit QPM
+capacity. The application remains blocked until the complete multi-service
 reservation succeeds.
 
 If every service accepts, the gateway journals the tuple set before returning
@@ -365,15 +378,32 @@ the same final request after a lost response returns that stored tuple set
 instead of creating another reservation.
 
 If any service is delayed because capacity changed after evaluation, the
-gateway releases reservations accepted during the partial attempt. The helper
-returns a retryable pre-run failure. Slurm deallocates every component of the
-job and requeues it at the preliminary evaluation stage. The helper and
-gateway do not poll while classical nodes are assigned.
+gateway releases reservations accepted during the partial attempt and leaves
+the operation retryable. The helper counts the attempt and reports the delay.
+`burst_buffer/lua` keeps the classical nodes assigned, pauses for
+`reservation_wait_interval` seconds (default 15), and invokes the helper
+again. The wait ends when every service accepts, when the helper's
+`max_reservation_attempts` (default 8) turns the repeated delay into a
+rejection, or when `reservation_wait_budget` seconds (default 90) have passed
+since the first attempt.
 
-A permanent reserve rejection also rolls back a partial multi-service attempt,
-but it fails the complete allocation rather than requeueing it. Requeue is
-bounded and uses Slurm backoff. Exhausting the configured attempt limit holds
-or fails the job according to explicit site policy instead of cycling forever.
+A transient failure, which is helper status 30 or a helper that could not be
+run, is retried with the nodes kept as well, with a pause that starts at
+`reservation_retry_delay` seconds (default 2) and doubles, at most
+`reservation_retries` times (default 3) and never after
+`reservation_retry_budget` seconds (default 60) since the first attempt. A
+reserve attempt that fails inside the gateway rolls back the reservations it
+accepted. When the rollback completes, the allocation becomes `rolled-back`
+and the operation retryable, so the repeated request reserves the complete
+set again.
+
+A permanent reserve rejection also rolls back a partial multi-service attempt
+and ends pre-run at once. A rejection, an exhausted retry, or an exhausted
+wait cancels the complete allocation. Pre-run writes the reason into the job's
+`AdminComment` and runs `scancel` before it returns an error, because Slurm
+25.05 requeues a job whose pre-run failed into a state it never schedules
+again. The helper and the gateway never poll. Only `burst_buffer/lua` pauses
+while classical nodes are assigned, within the configured budgets.
 
 **Status:** draft
 
@@ -381,20 +411,25 @@ or fails the job according to explicit site policy instead of cycling forever.
 
 Slurm's generic burst-buffer failure path places a job on hold. That behavior
 does not satisfy the allocation contract because an interactive `salloc` could
-continue waiting on a job that can never run.
+continue waiting on a job that can never run. A pre-run failure has the same
+effect in Slurm 25.05. The burst-buffer plugin requeues the job with the state
+reason `FAIL_BURST_BUFFER_OP`, and slurmctld treats that reason as a hold
+without reporting the job as held.
 
 The qfw-slurm integration therefore needs a controller-safe rejection path.
-It records the QPM reason, completes rollback, and cancels the pending Slurm
-allocation. The implementation must validate that cancellation from the
-asynchronous burst-buffer helper does not deadlock slurmctld and causes both
-`salloc` and `sbatch` to observe a terminal failure. If the stock Lua interface
-cannot provide that behavior safely, a minimal controller adapter is required.
-Network access is not moved into `job_submit/lua` as a workaround.
+It records the QPM reason in the job's `AdminComment`, completes rollback, and
+cancels the pending Slurm allocation with `scancel`. The implementation must
+validate that cancellation from the asynchronous burst-buffer helper does not
+deadlock slurmctld and causes both `salloc` and `sbatch` to observe a terminal
+failure. If the stock Lua interface cannot provide that behavior safely, a
+minimal controller adapter is required. Network access is not moved into
+`job_submit/lua` as a workaround.
 
 The pre-run path must distinguish a retryable `DELAYED` result from a permanent
-`REJECTED` result. The former uses Slurm's requeue behavior after deallocating
-the complete job. The latter must bypass further requeue attempts and terminate
-the allocation after rollback.
+`REJECTED` result. The former is waited out inside pre-run with the nodes
+assigned. The latter ends pre-run at once and terminates the allocation after
+rollback. Neither hands the job to Slurm's requeue path, and a pre-run error
+is never returned without cancelling the job first.
 
 **Status:** draft
 
@@ -475,20 +510,27 @@ new
   -> evaluation-delayed -> evaluating -> ...
   -> evaluation-accepted
        -> reserving
-       -> reservation-delayed -> requeued -> evaluating
+       -> reservation-delayed -> reserving -> ...
        -> reservation-accepted -> releasing -> released
        -> reservation-rejected
+       -> rolling-back -> rolled-back -> reserving -> ...
+       -> rolling-back (incomplete, until an operator releases the rest)
   -> evaluation-rejected
-  -> rollback-pending
 ```
 
 `evaluation-delayed` is nonterminal. The operation journal retains its
 fingerprint and diagnostics but permits the next identical evaluate request to
 call QPMd again. `evaluation-accepted` permits node selection but holds no
-capacity. A delayed final reservation transitions the allocation to requeue
-after partial rollback. `reservation-accepted` and rejection outcomes are
-terminal for their operation IDs. Repeating an accepted reserve request returns
-the stored tuple set.
+capacity. `reservation-delayed` is nonterminal in the same way. After partial
+rollback the allocation holds nothing, the operation stays retryable, and the
+next reserve request under the same request ID or a new one reserves the
+complete set again. A reserve attempt that fails inside the gateway rolls back
+and, when the rollback completes, leaves the allocation `rolled-back`, which
+reserves again like `reservation-delayed`. An incomplete rollback stays
+`rolling-back` with its failed reservation rows, refuses every reserve request
+for the job, and waits for an operator `retry-release`.
+`reservation-accepted` and rejection outcomes are terminal for their operation
+IDs. Repeating an accepted reserve request returns the stored tuple set.
 
 For a multi-service attempt, accepted services are temporary until the full
 set accepts. Delay, rejection, or operational failure initiates rollback.
@@ -522,11 +564,11 @@ replaced rather than retained as an alternate workflow.
 | Options registered in allocator, local, and remote contexts | Options registered only for allocation submission |
 | Gateway client initialized by every SPANK context | Gateway client used by the burst-buffer helper |
 | First `srun` step reserves the QPM | Pending stage-in evaluates; pre-run reserves after node assignment |
-| Delayed admission denies a task launch | Delayed evaluation returns `BUSY`; delayed final reservation deallocates and requeues |
+| Delayed admission denies a task launch | Delayed evaluation returns `BUSY`; delayed final reservation is reserved again from pre-run with the nodes kept |
 | Remote SPANK reserves and exports | Remote SPANK retrieves accepted journal state through `QFW_GW_GET_RESERVATIONS`; pre-run owns reservation |
-| Task initialization reports permanent rejection | Evaluation rejection fails before node assignment; final rejection deallocates nodes and fails the allocation |
+| Task initialization reports permanent rejection | Evaluation rejection fails before node assignment; final rejection cancels the allocation, which releases its nodes |
 | Controller epilog releases reservations | Burst-buffer teardown performs best-effort release |
-| Gateway journals delayed reserve as `not-accepted` | Delayed evaluation is polled; delayed final reservation triggers rollback and a new Slurm allocation cycle |
+| Gateway journals delayed reserve as `not-accepted` | Delayed evaluation is polled; delayed final reservation rolls back, stays retryable, and is repeated from pre-run |
 
 **Status:** draft
 
@@ -627,32 +669,38 @@ needed for pre-run. Repeated stage-in calls do not create a reservation.
 
 **Status:** draft
 
-### Step 8. Reserve during pre-run and requeue on contention
+### Step 8. Reserve during pre-run and wait on contention
 
-Implement one synchronous `QFW_GW_RESERVE` call from `slurm_bb_pre_run` after
+Implement the synchronous `QFW_GW_RESERVE` call from `slurm_bb_pre_run` after
 all classical components are assigned. Journal an accepted response before
 returning it and atomically write the reservation tuple set before permitting
 the application to start.
 
-Map a delayed final decision to partial rollback, deallocation of every normal
-or heterogeneous component, and Slurm requeue. The next cycle begins with a
-new evaluation attempt. Use bounded retry and backoff; never poll QPMd while
-classical nodes remain assigned. Test that a lost accepted response replays the
-same reservation instead of creating another one.
+Map a delayed final decision to partial rollback and a repeated reserve from
+pre-run with the nodes kept, paced by `reservation_wait_interval` and bounded
+by `reservation_wait_budget` and the helper's `max_reservation_attempts`.
+Retry a transient helper or gateway failure with a doubling pause, bounded by
+`reservation_retries` and `reservation_retry_budget`. Leave a delayed or
+rolled-back reserve retryable in the gateway journal so that the repeat
+reaches the QPMs again. Cancel the job before returning any pre-run error.
+Test that a lost accepted response replays the same reservation instead of
+creating another one.
 
 **Status:** draft
 
 ### Step 9. Implement rejection-to-allocation failure
 
 Prototype cancellation from the asynchronous stage-in execution context and
-failure from the pre-run context. Confirm through Slurm source tracing and live
+from the pre-run context. Confirm through Slurm source tracing and live
 cluster tests that no controller lock is held across a cancellation RPC.
 
 One test rejects during evaluation. It must exit with a nonzero status,
 allocate no nodes, retain the reason in Slurm diagnostics, and leave no QPM
-reservation. A second test rejects during final reserve. It must release every
-classical component, roll back any partial QPM set, and fail rather than
-requeue. A held pending job does not satisfy either test.
+reservation. A second test rejects during final reserve. It must roll back any
+partial QPM set, record the reason in the job's `AdminComment`, and cancel the
+job, which releases every classical component, rather than return an error
+that Slurm answers with a requeue. A held or parked pending job does not
+satisfy either test.
 
 **Status:** draft
 
@@ -718,7 +766,7 @@ non-root users while QPMd and the gateway remain root- or service-owned.
 
 1. An ordinary allocation whose evaluation and final NWQSim reservation accept
 2. A delayed evaluation that later accepts without holding nodes or QPM capacity
-3. A final reservation that delays, releases its assigned nodes, requeues, and later accepts
+3. A final reservation that delays, keeps its assigned nodes while pre-run waits, and later accepts
 4. A permanently rejected evaluation
 5. A permanently rejected final reservation
 6. A heterogeneous allocation with the application in group zero
@@ -729,15 +777,17 @@ non-root users while QPMd and the gateway remain root- or service-owned.
 11. Cancellation while evaluation is delayed
 12. Cancellation and normal completion after final acceptance
 13. Gateway loss during evaluation, reserve, and release
-14. Exhaustion of the final-reservation requeue limit
+14. Exhaustion of the final-reservation attempt limit and of the pre-run wait budget
 15. A short, explicitly authorized real-IQM application
 
 During delayed evaluation, `squeue` must show no allocated classical nodes and
-QPM accounting must show no reservation. A delayed final reserve may briefly
-place nodes in configuring state, but all components must be deallocated before
-the job returns to pending. QPM accounting must show at most one reservation
-per service and Slurm allocation. Teardown must leave Slurm terminal even when
-release is reported as unresolved.
+QPM accounting must show no reservation. A delayed final reserve keeps the job
+configuring with its nodes while pre-run waits, for no longer than the wait
+budget and one further helper call, and it must end in an accepted
+reservation or a cancelled job whose `AdminComment` carries the reason. No job
+may be left pending after a pre-run failure. QPM accounting must show at most
+one reservation per service and Slurm allocation. Teardown must leave Slurm
+terminal even when release is reported as unresolved.
 
 **Status:** draft
 
@@ -753,15 +803,30 @@ describe static site limits, but it does not replace this admission workflow.
 
 Preliminary acceptance does not guarantee final admission. Several jobs can
 evaluate successfully, receive classical allocations, and then compete for
-the same QPM capacity. A loser deallocates its nodes and requeues. This can
-produce scheduling churn or starvation, so requeue attempts and backoff are
-bounded and observable.
+the same QPM capacity. A loser keeps its nodes while pre-run waits for the
+QPM and is cancelled when the wait budget or the attempt limit is exhausted.
+This can leave assigned nodes idle during the wait, or cancel a job that
+would have been admitted a little later, so the wait, the retries, and the
+attempt limit are bounded, configurable, and logged.
 
-Classical nodes remain assigned during the single final reservation exchange.
-The helper must not poll, sleep until quantum capacity changes, or leave the
-job configuring indefinitely. The QPM reservation becomes active only after
-the classical allocation exists and immediately before application start, so
-its normal lease covers execution rather than the classical scheduling wait.
+Classical nodes remain assigned during the final reservation exchange,
+including the pauses between repeated attempts. The helper and the gateway do
+not poll. Only `burst_buffer/lua` pauses, within `reservation_wait_budget` and
+`reservation_retry_budget`, and it never leaves the job configuring
+indefinitely. The larger budget, plus one pause and one helper call, must stay
+below the `OtherTimeout` of `burst_buffer.conf`, because Slurm kills a pre-run
+hook that exceeds it and requeues the job. The QPM reservation becomes active
+only after the classical allocation exists and immediately before application
+start, so its normal lease covers execution rather than the classical
+scheduling wait.
+
+Slurm 25.05 requeues a job whose pre-run hook failed with the state reason
+`FAIL_BURST_BUFFER_OP`, shown as `BurstBufferOperation`, and
+`job_independent()` in slurmctld treats that reason as a hold without
+reporting the job as held. The job keeps its priority and is never scheduled
+again until an operator runs `scontrol release`. The bounded requeue that the
+burst-buffer plugin offers for the first pre-run failures is therefore
+unusable, and pre-run cancels the job before it returns any error.
 
 The gateway and QPM do not participate in one atomic transaction with
 slurmctld. Stable request IDs, accepted-response journaling, idempotent release,
@@ -779,11 +844,16 @@ The migration is complete when all of the following statements hold.
 - Slurm allocates no classical nodes while preliminary evaluation is delayed.
 - Every Slurm poll produces at most one corresponding gateway/QPM evaluation.
 - `QFW_GW_EVALUATE` never creates a reservation ID or consumes QPM capacity.
-- Slurm performs exactly one final reservation attempt per allocation cycle
-  while nodes are assigned.
-- A delayed final reservation deallocates all components before requeueing.
+- Pre-run makes a bounded number of final reservation attempts while nodes are
+  assigned, never more than the configured limit, and the helper and gateway
+  never poll on their own.
+- A delayed final reservation ends in an accepted reservation or a cancelled
+  job within the configured wait budget, with the nodes kept meanwhile.
 - Accepted allocations expose one canonical reservation tuple per QPM.
-- Permanent rejection terminates the complete Slurm allocation.
+- Permanent rejection, an exhausted retry, or an exhausted wait cancels the
+  complete Slurm allocation and records the reason in the job's
+  `AdminComment`.
+- No pre-run failure leaves a job requeued in a state Slurm never schedules.
 - Normal and heterogeneous applications receive usable reservation context.
 - Repeated application steps do not create additional reservations.
 - Cancellation and completion attempt release exactly once per lifecycle.
