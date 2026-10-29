@@ -111,7 +111,9 @@ gateway log. An `evaluation-delayed` state is normal and must have no
 `reservations` field. A `reservation-delayed` state is normal while pre-run
 waits for the QPM with the nodes assigned. It must end in
 `reservation-accepted`, or in a cancelled job once the wait budget or the
-attempt limit is exhausted.
+attempt limit is exhausted. A job that pre-run cancelled carries the reason
+in its `AdminComment` (`sacct -j <id> -X --format=State,AdminComment`), and
+the slurmctld log has the same message.
 
 If controller retry state cannot be written after QPMd commits a reservation,
 teardown still sends allocation-wide release using the configured cluster and
