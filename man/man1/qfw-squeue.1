@@ -42,6 +42,12 @@ view rather than this command.
 The command uses the QPM sanitized telemetry interface.  It does not display
 reservation identifiers, application authorization material, or provider
 credentials.
+.SH ENVIRONMENT
+The command reads the variables described in
+.BR qfw-sinfo (1),
+including
+.B QFW_DEFW_VERSION
+to run on DEFw v2.
 .SH EXIT STATUS
 Zero indicates complete output.  One indicates partial output caused by a
 failed required data source.  Two indicates invalid command syntax.

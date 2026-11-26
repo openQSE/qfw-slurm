@@ -7,7 +7,7 @@ import socket
 import sys
 from pathlib import Path
 
-from qfw_slurm_common import client_environment
+from qfw_slurm_common import client_environment, launcher_name
 
 
 class InspectionBootstrapError(RuntimeError):
@@ -56,7 +56,7 @@ def _launch(program: str, module: str, help_module: str) -> int:
             raise InspectionBootstrapError(
                 "DEFW_PREFIX is unset; activate QFw before running this command"
             )
-        defwp = Path(defw_prefix) / "bin" / "defwp"
+        defwp = Path(defw_prefix) / "bin" / launcher_name()
         if not defwp.is_file() or not os.access(defwp, os.X_OK):
             raise InspectionBootstrapError(
                 f"DEFw launcher is not executable: {defwp}"

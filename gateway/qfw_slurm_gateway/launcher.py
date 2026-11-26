@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from qfw_slurm_common import client_environment
+from qfw_slurm_common import client_environment, launcher_name
 
 from .config import ConfigurationError, GatewayConfig, load_config
 
@@ -214,7 +214,10 @@ def defwp_command(config: GatewayConfig, arguments: list[str]) -> list[str]:
         raise ConfigurationError(
             "DEFW_PREFIX is unset; activate the configured QFw installation"
         )
-    defwp = Path(defw_prefix) / "bin" / "defwp"
+    try:
+        defwp = Path(defw_prefix) / "bin" / launcher_name()
+    except ValueError as error:
+        raise ConfigurationError(str(error)) from error
     if not defwp.is_file() or not os.access(defwp, os.X_OK):
         raise ConfigurationError(f"DEFw launcher does not exist: {defwp}")
     return [

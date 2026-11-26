@@ -111,6 +111,7 @@ def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(sys, "prefix", str(venv))
     monkeypatch.setenv("QFW_PREFIX", str(activation.parent.parent))
     monkeypatch.setenv("DEFW_PREFIX", str(defwp.parent.parent))
+    monkeypatch.delenv("QFW_DEFW_VERSION", raising=False)
     config = GatewayConfig(
         listen_host="127.0.0.1",
         listen_port=18095,
@@ -134,3 +135,86 @@ def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> Non
         "/etc/openqse/qfw-slurm/gateway.yaml",
         "serve",
     ]
+
+
+def _activated_installation(tmp_path, monkeypatch, launchers):
+    activation = tmp_path / "qfw" / "bin" / "qfw-activate"
+    activation.parent.mkdir(parents=True)
+    activation.touch()
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    bin_dir = tmp_path / "defw" / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in launchers:
+        (bin_dir / name).touch()
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setattr(sys, "prefix", str(venv))
+    monkeypatch.setenv("QFW_PREFIX", str(activation.parent.parent))
+    monkeypatch.setenv("DEFW_PREFIX", str(bin_dir.parent))
+    config = GatewayConfig(
+        listen_host="127.0.0.1",
+        listen_port=18095,
+        accepted_uids=frozenset({0}),
+        cluster_name="cluster",
+        journal_path=tmp_path / "journal",
+        qfw_activation=activation,
+        qfw_venv=venv,
+        qfw_site_config=tmp_path / "site.yaml",
+    )
+    return config, bin_dir
+
+
+@pytest.mark.parametrize(
+    ("selected", "launcher"),
+    [
+        (None, "defwp"),
+        ("", "defwp"),
+        ("1", "defwp"),
+        ("2", "defw2-python"),
+    ],
+)
+def test_defwp_command_runs_on_the_selected_defw(
+    tmp_path, monkeypatch, selected, launcher
+) -> None:
+    config, bin_dir = _activated_installation(
+        tmp_path, monkeypatch, ("defwp", "defw2-python")
+    )
+    if selected is None:
+        monkeypatch.delenv("QFW_DEFW_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("QFW_DEFW_VERSION", selected)
+
+    command = defwp_command(config, ["serve"])
+
+    assert command == [
+        str(bin_dir / launcher),
+        "-m",
+        "qfw_slurm_gateway",
+        "serve",
+    ]
+
+
+def test_defwp_command_rejects_an_unknown_defw(tmp_path, monkeypatch) -> None:
+    config, _ = _activated_installation(
+        tmp_path, monkeypatch, ("defwp", "defw2-python")
+    )
+    monkeypatch.setenv("QFW_DEFW_VERSION", "3")
+
+    with pytest.raises(
+        ConfigurationError, match="QFW_DEFW_VERSION must be 1 or 2"
+    ):
+        defwp_command(config, ["serve"])
+
+
+def test_defwp_command_needs_the_launcher_of_the_selected_defw(
+    tmp_path, monkeypatch
+) -> None:
+    config, bin_dir = _activated_installation(
+        tmp_path, monkeypatch, ("defwp",)
+    )
+    monkeypatch.setenv("QFW_DEFW_VERSION", "2")
+
+    with pytest.raises(ConfigurationError) as error:
+        defwp_command(config, ["serve"])
+
+    assert str(bin_dir / "defw2-python") in str(error.value)

@@ -45,8 +45,10 @@ tests/system/test_driver_gateway.sh \
   "${PWD}/build-test/qfw-slurm-driver"
 ```
 
-This variant hosts each deterministic gateway in DEFw. Use the live gateway
-recipe when the intent is to validate actual directory and QPM calls.
+This variant hosts each deterministic gateway in DEFw. To host them in DEFw
+v2, name `${DEFW_PREFIX}/bin/defw2-python` as the runner and prepare the
+environment of a directory served on DEFw v2. Use the live gateway recipe
+when the intent is to validate actual directory and QPM calls.
 
 ## Recovery
 

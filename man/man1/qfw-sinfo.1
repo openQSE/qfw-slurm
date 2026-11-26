@@ -37,7 +37,18 @@ Default QFw site configuration.
 .TP
 .B DEFW_PREFIX
 Activated DEFw installation containing
-.BR defwp (1).
+.BR defwp (1),
+or
+.B defw2-python
+for DEFw v2.
+.TP
+.B QFW_DEFW_VERSION
+Selects the DEFw the command runs on.  Unset or
+.B 1
+is DEFw v1, and
+.B 2
+is DEFw v2.  The site configuration must name a directory served on the
+same DEFw.
 .SH EXIT STATUS
 Zero indicates complete output.  One indicates partial output caused by a
 failed required data source.  Two indicates invalid command syntax.

@@ -11,10 +11,15 @@ qfw-slurm-gateway-launch \- initialize DEFw and run a gateway command
 is the supported entry point for gateway commands that contact the DEFw
 directory or QPM services. It validates the activated QFw prefix and Python
 environment, reads the site directory connection record, prepares the DEFw
-parent environment, and replaces itself with
-.B defwp
-running
+parent environment, and replaces itself with the DEFw launcher running
 .BR qfw-slurm-gateway (8).
+The launcher is
+.BR defwp ,
+or
+.B defw2-python
+when
+.B QFW_DEFW_VERSION
+selects DEFw v2.
 .PP
 The site systemd unit activates QFw and invokes this command for
 .BR serve .
@@ -55,8 +60,20 @@ qfw-slurm-gateway-launch \
 Must identify the activated QFw installation named by the gateway file.
 .TP
 .B DEFW_PREFIX
-Must contain the executable
-.IR bin/defwp .
+Must contain the executable DEFw launcher:
+.IR bin/defwp ,
+or
+.I bin/defw2-python
+for DEFw v2.
+.TP
+.B QFW_DEFW_VERSION
+Selects the DEFw the gateway runs on, as it does for QFw's own processes.
+Unset or
+.B 1
+is DEFw v1, and
+.B 2
+is DEFw v2.  The site configuration must name a directory served on the
+same DEFw.
 .TP
 .B QFW_SHARED_ROOT
 Expands the directory connection path selected by the QFw site configuration.

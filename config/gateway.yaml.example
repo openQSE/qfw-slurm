@@ -19,7 +19,8 @@ slurm:
   command: scontrol
 
 qfw:
-  # The systemd unit sources activation before starting defwp. These values
+  # The systemd unit sources activation before starting the DEFw launcher,
+  # defwp or, with QFW_DEFW_VERSION=2, defw2-python. These values
   # also document and validate the QFw installation selected by the site.
   activation: /opt/openqse/qfw/bin/qfw-activate
   venv: /opt/openqse/qfw-venv
