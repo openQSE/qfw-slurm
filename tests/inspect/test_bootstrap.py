@@ -9,9 +9,7 @@ import pytest
 from qfw_slurm_inspect import bootstrap
 
 
-def test_directory_environment_loads_only_directory_client_api(
-    tmp_path,
-) -> None:
+def test_directory_environment_names_the_directory(tmp_path) -> None:
     environment = bootstrap._directory_environment(
         tmp_path / "site.yaml",
         {
@@ -20,7 +18,10 @@ def test_directory_environment_loads_only_directory_client_api(
         },
     )
 
-    assert environment["DEFW_ONLY_LOAD_MODULE"] == "api_dirsvc"
+    assert environment["QFW_SITE_DIRSVC_NAME"] == "directory"
+    assert environment["DEFW_PARENT_HOSTNAME"] == "127.0.0.1"
+    assert environment["DEFW_PARENT_PORT"] == "18090"
+    assert environment["DEFW_DISABLE_DIRSVC"] == "no"
 
 
 def test_finish_defw_command_preserves_status(monkeypatch) -> None:

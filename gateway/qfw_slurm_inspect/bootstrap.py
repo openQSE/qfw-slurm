@@ -7,7 +7,7 @@ import socket
 import sys
 from pathlib import Path
 
-from qfw_slurm_common import DEFW_LAUNCHER, client_environment
+from qfw_slurm_common import DEFW_LAUNCHER
 
 
 class InspectionBootstrapError(RuntimeError):
@@ -112,14 +112,11 @@ def _directory_environment(site_path: Path, directory: dict) -> dict[str, str]:
         ),
         "DEFW_DISABLE_DIRSVC": "no",
         "DEFW_AGENT_TYPE": "agent",
-        "DEFW_SHELL_TYPE": "cmdline",
         "DEFW_LISTEN_PORT": str(_free_port()),
         "DEFW_PARENT_ADDR": address,
         "DEFW_PARENT_HOSTNAME": host,
         "DEFW_PARENT_PORT": str(port),
-        "DEFW_PARENT_NAME": name,
     }
-    environment.update(client_environment())
     connection_file = directory.get("connection_file")
     if connection_file:
         environment["QFW_DIRECTORY_SERVICE_INFO"] = str(connection_file)
