@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from qfw_slurm_common import client_environment
+from qfw_slurm_common import DEFW_LAUNCHER, client_environment
 
 from .config import ConfigurationError, GatewayConfig, load_config
 
@@ -186,7 +186,7 @@ def directory_environment(site_config: Path) -> dict[str, str]:
     return environment
 
 
-def defwp_command(config: GatewayConfig, arguments: list[str]) -> list[str]:
+def defw_command(config: GatewayConfig, arguments: list[str]) -> list[str]:
     """Build the DEFw module command after validating activation."""
 
     if not config.qfw_activation.is_file():
@@ -214,11 +214,13 @@ def defwp_command(config: GatewayConfig, arguments: list[str]) -> list[str]:
         raise ConfigurationError(
             "DEFW_PREFIX is unset; activate the configured QFw installation"
         )
-    defwp = Path(defw_prefix) / "bin" / "defwp"
-    if not defwp.is_file() or not os.access(defwp, os.X_OK):
-        raise ConfigurationError(f"DEFw launcher does not exist: {defwp}")
+    launcher = Path(defw_prefix) / "bin" / DEFW_LAUNCHER
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        raise ConfigurationError(
+            f"DEFw launcher does not exist: {launcher}"
+        )
     return [
-        str(defwp),
+        str(launcher),
         "-m",
         "qfw_slurm_gateway",
         *arguments,
@@ -241,7 +243,7 @@ def main() -> int:
     try:
         config = load_config(args.config)
         environment = directory_environment(config.qfw_site_config)
-        command = defwp_command(
+        command = defw_command(
             config, ["--config", args.config, *args.arguments]
         )
     except ConfigurationError as error:
