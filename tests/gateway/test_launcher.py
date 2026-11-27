@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from qfw_slurm_gateway.config import ConfigurationError, GatewayConfig
-from qfw_slurm_gateway.launcher import defwp_command, directory_environment
+from qfw_slurm_gateway.launcher import defw_command, directory_environment
 
 
 def _write_site(tmp_path: Path, connection: str) -> Path:
@@ -98,19 +98,20 @@ def test_invalid_connection_record_is_rejected(
         directory_environment(site)
 
 
-def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> None:
+def _activated_installation(tmp_path, monkeypatch, launchers):
     activation = tmp_path / "qfw" / "bin" / "qfw-activate"
     activation.parent.mkdir(parents=True)
     activation.touch()
     venv = tmp_path / "venv"
     venv.mkdir()
-    defwp = tmp_path / "defw" / "bin" / "defwp"
-    defwp.parent.mkdir(parents=True)
-    defwp.touch()
-    defwp.chmod(0o755)
+    bin_dir = tmp_path / "defw" / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in launchers:
+        (bin_dir / name).touch()
+        (bin_dir / name).chmod(0o755)
     monkeypatch.setattr(sys, "prefix", str(venv))
     monkeypatch.setenv("QFW_PREFIX", str(activation.parent.parent))
-    monkeypatch.setenv("DEFW_PREFIX", str(defwp.parent.parent))
+    monkeypatch.setenv("DEFW_PREFIX", str(bin_dir.parent))
     config = GatewayConfig(
         listen_host="127.0.0.1",
         listen_port=18095,
@@ -121,16 +122,35 @@ def test_defwp_command_uses_activated_installation(tmp_path, monkeypatch) -> Non
         qfw_venv=venv,
         qfw_site_config=tmp_path / "site.yaml",
     )
+    return config, bin_dir
 
-    command = defwp_command(
+
+def test_defw_command_uses_activated_installation(tmp_path, monkeypatch) -> None:
+    config, bin_dir = _activated_installation(
+        tmp_path, monkeypatch, ("defw2-python",)
+    )
+
+    command = defw_command(
         config, ["--config", "/etc/openqse/qfw-slurm/gateway.yaml", "serve"]
     )
 
     assert command == [
-        str(defwp),
+        str(bin_dir / "defw2-python"),
         "-m",
         "qfw_slurm_gateway",
         "--config",
         "/etc/openqse/qfw-slurm/gateway.yaml",
         "serve",
     ]
+
+
+def test_defw_command_needs_the_defw_v2_launcher(tmp_path, monkeypatch) -> None:
+    # An installation with only DEFw v1's launcher cannot run the gateway.
+    config, bin_dir = _activated_installation(
+        tmp_path, monkeypatch, ("defwp",)
+    )
+
+    with pytest.raises(ConfigurationError) as error:
+        defw_command(config, ["serve"])
+
+    assert str(bin_dir / "defw2-python") in str(error.value)

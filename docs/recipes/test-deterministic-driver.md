@@ -33,14 +33,14 @@ failure, malformed QPM output, timeout, and unresolved release state.
 
 On a QFw test system, enter a root shell through the site's normal
 administrative procedure. Activate QFw and prepare the same DEFw
-directory-parent environment used by the site gateway, then select `defwp`
-explicitly:
+directory-parent environment used by the site gateway, then select
+`defw2-python` explicitly:
 
 ```bash
 test "$(id -u)" -eq 0
 export PYTHONPATH="${PWD}/gateway:${PWD}"
 export QFW_TEST_PYTHON="$(command -v python3)"
-export QFW_TEST_DEFW_RUNNER="${DEFW_PREFIX}/bin/defwp"
+export QFW_TEST_DEFW_RUNNER="${DEFW_PREFIX}/bin/defw2-python"
 tests/system/test_driver_gateway.sh \
   "${PWD}/build-test/qfw-slurm-driver"
 ```
