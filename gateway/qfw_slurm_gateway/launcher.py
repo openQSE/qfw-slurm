@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from qfw_slurm_common import DEFW_LAUNCHER, client_environment
+from qfw_slurm_common import DEFW_LAUNCHER
 
 from .config import ConfigurationError, GatewayConfig, load_config
 
@@ -173,14 +173,11 @@ def directory_environment(site_config: Path) -> dict[str, str]:
         "QFW_DIRSVC_CONNECT_TIMEOUT_SECONDS": str(timeout),
         "DEFW_DISABLE_DIRSVC": "no",
         "DEFW_AGENT_TYPE": "agent",
-        "DEFW_SHELL_TYPE": "cmdline",
         "DEFW_LISTEN_PORT": str(_free_tcp_port()),
         "DEFW_PARENT_ADDR": parent_address,
         "DEFW_PARENT_HOSTNAME": host,
         "DEFW_PARENT_PORT": str(port),
-        "DEFW_PARENT_NAME": endpoint_name,
     }
-    environment.update(client_environment())
     if connection_path is not None:
         environment["QFW_DIRECTORY_SERVICE_INFO"] = str(connection_path)
     return environment
